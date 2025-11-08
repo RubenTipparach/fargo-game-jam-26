@@ -5,7 +5,7 @@ local Config = {}
 
 -- Debug flags
 Config.debug = false  -- General debug info (lights, sprites, etc)
-Config.debug_lighting = false  -- Show only lighting arrow and rotation values
+Config.debug_lighting = true  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
 
 -- Star configuration
@@ -42,6 +42,7 @@ Config.ship = {
 	position = {x = 0, y = 0, z = 0},
 	rotation = {pitch = 0, yaw = 0, roll = 0},
 	model_file = "shippy1.obj",
+	sprite_id = 5,  -- Ship texture sprite
 	speed = 0,  -- Current ship speed (0-1)
 	max_speed = 1,  -- Maximum speed value
 	speed_smoothing = 0.005,  -- Speed interpolation smoothing
@@ -72,6 +73,13 @@ Config.planet = {
 	spin_speed = 0.0001,  -- Rotation speed (faster for visibility)
 }
 
+-- Sun configuration (billboard sprite in skybox)
+Config.sun = {
+	sprite_id = 25,  -- Sun sprite
+	size = 16,  -- Screen-space size of sun sprite
+	distance = 100,  -- Distance from camera (for positioning opposite to light)
+}
+
 -- Lighting configuration
 Config.lighting = {
 	yaw = 0.19,  -- Initial light yaw
@@ -85,6 +93,20 @@ Config.lighting = {
 Config.rendering = {
 	render_distance = 200,  -- Increased for distant objects like planet
 	clear_color = 0,  -- Dark blue/black background
+}
+
+-- Particle system configuration for ship movement
+Config.particles = {
+	enabled = true,  -- Enable particle effects for ship movement
+	max_particles = 40,  -- Maximum number of active particles (increased for farther spread)
+	lifetime = 2.0,  -- Particle lifetime in seconds (longer so trails last visible)
+	spawn_rate = 0.05,  -- Rate at which particles spawn (lower = faster spawning)
+	line_length = 2,  -- Length of particle lines in 3D units
+	base_color = 11,  -- Base particle color (bright cyan)
+	-- Color variation by depth (far = dimmer, near = brighter)
+	color_by_depth = true,  -- Enable color variation based on depth
+	color_near = 13,  -- Color when particle is near camera
+	color_far = 5,  -- Color when particle is far from camera
 }
 
 return Config

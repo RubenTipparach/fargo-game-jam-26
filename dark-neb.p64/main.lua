@@ -510,6 +510,9 @@ local model_sphere = nil
 local model_planet = nil
 local planet_rotation = 0
 
+-- Particle trails (speedlines) - simple array of line segments
+local particle_trails = {}  -- Array of {x1, z1, x2, z2, age, lifetime}
+
 
 
 -- Create a UV-mapped sphere (from ld58.p64)
@@ -808,12 +811,9 @@ function _update()
 		-- 	rotation_amount = angle_diff
 		-- end
 
-		-- Debug: print rotation info
-		printh("Rotation: angle_diff=" .. flr(angle_diff*10000)/10000 .. " rotation_amount=" .. flr(rotation_amount*10000)/10000 .. " turn_rate=" .. Config.ship.turn_rate)
 
 		-- Apply rotation to current angle
 		local new_angle = current_angle + rotation_amount
-		printh("Rotation: old_angle=" .. current_angle .. " new_angle=" .. new_angle)
 		
 		-- Convert back to direction vector
 		ship_heading_dir.x = cos(new_angle)
@@ -834,6 +834,75 @@ function _update()
 		Config.ship.position.z = Config.ship.position.z + ship_heading_dir.z * move_speed
 	end
 
+	-- Update particle cubes (remove expired ones)
+	local i = 1
+	while i <= #particle_trails do
+		local cube = particle_trails[i]
+		cube.age = cube.age + 1/60
+		if cube.age >= cube.lifetime then
+			table.remove(particle_trails, i)
+		else
+			i = i + 1
+		end
+	end
+
+	-- Spawn new particle cubes around ship position
+	if ship_speed > 0.01 then
+		local spawn_interval = Config.particles.spawn_rate
+		-- Store spawn timer in a way that persists
+		if not _spawn_timer then _spawn_timer = 0 end
+		_spawn_timer = _spawn_timer + 1/60
+
+		if _spawn_timer >= spawn_interval then
+			-- Spawn a line representing velocity at this point in space
+			local scatter_radius = 30
+
+			-- Random point in sphere using uniform distribution
+			-- Simple uniform random in box approach
+			local scatter_x = (rnd(2) - 1) * scatter_radius
+			local scatter_y = (rnd(2) - 1) * scatter_radius
+			local scatter_z = (rnd(2) - 1) * scatter_radius
+
+			-- Normalize to sphere surface and scale by random radius
+			local dist_sq = scatter_x * scatter_x + scatter_y * scatter_y + scatter_z * scatter_z
+			local dist = sqrt(dist_sq)
+			if dist > 0.01 then
+				local scale = (rnd(1) ^ (1/3)) * scatter_radius / dist  -- uniform distribution in sphere
+				scatter_x = scatter_x * scale
+				scatter_y = scatter_y * scale
+				scatter_z = scatter_z * scale
+			end
+
+			-- Spawn position in world space
+			local spawn_x = Config.ship.position.x + scatter_x
+			local spawn_y = Config.ship.position.y + scatter_y
+			local spawn_z = Config.ship.position.z + scatter_z
+
+			-- Velocity direction (ship's heading) and magnitude scaled by speed
+			local line_length = ship_speed * 3
+			local vel_x = ship_heading_dir.x * line_length
+			local vel_y = 0
+			local vel_z = ship_heading_dir.z * line_length
+
+			-- Line end point
+			local end_x = spawn_x + vel_x
+			local end_y = spawn_y + vel_y
+			local end_z = spawn_z + vel_z
+
+			table.insert(particle_trails, {
+				x1 = spawn_x,
+				y1 = spawn_y,
+				z1 = spawn_z,
+				x2 = end_x,
+				y2 = end_y,
+				z2 = end_z,
+				age = 0,
+				lifetime = Config.particles.lifetime
+			})
+			_spawn_timer = 0
+		end
+	end
+
 	-- Camera follows ship (focus point tracks ship position)
 	camera.x = Config.ship.position.x
 	camera.z = Config.ship.position.z
@@ -844,12 +913,47 @@ function _update()
 	planet_rotation = planet_rotation + Config.planet.spin_speed
 end
 
+-- Draw sun as a billboard sprite positioned opposite to light direction
+-- Renders as a skybox element (always in background)
+local function draw_sun()
+	-- Get light direction
+	local light_dir = get_light_direction()
+
+	-- Position sun opposite to light (at far distance to appear in skybox)
+	local sun_distance = Config.sun.distance
+	local sun_x = camera.x - light_dir.x * sun_distance
+	local sun_y = camera.y - light_dir.y * sun_distance
+	local sun_z = camera.z - light_dir.z * sun_distance
+
+	-- Project sun position to screen space
+	local screen_x, screen_y, view_z = project_point(sun_x, sun_y, sun_z, camera)
+
+	-- Only draw if sun is in front of camera
+	if screen_x and screen_y and view_z > 0 then
+		-- Set color 0 as transparent for the sun sprite
+		palt(0, true)
+
+		-- Draw sprite centered at screen position
+		-- Sprite 25 is 128x128 pixels = 16x16 cells (8x8 pixels per cell)
+		-- Scale to desired screen size in pixels, then convert to cells
+		local sprite_width_cells = Config.sun.size / 8  -- Convert pixels to cells
+		local sprite_height_cells = Config.sun.size / 8
+		local half_size = Config.sun.size / 2
+		spr(Config.sun.sprite_id, screen_x - half_size, screen_y - half_size, sprite_width_cells, sprite_height_cells)
+
+		-- Reset transparency (restore default palt)
+		palt()
+	end
+end
 
 function _draw()
 	cls(0)  -- Clear to dark blue
 
 	-- Draw stars first (before everything else)
 	draw_stars()
+
+	-- Draw sun after stars, but before all 3D objects
+	draw_sun()
 
 	if not model_shippy then
 		print("no model loaded!", 10, 50, 8)
@@ -893,7 +997,7 @@ function _draw()
 		local shippy_faces = RendererLit.render_mesh(
 			model_shippy.verts, model_shippy.faces, camera,
 			ship_pos.x, ship_pos.y, ship_pos.z,
-			nil,  -- sprite override (use sprite from model = sprite 1)
+			Config.ship.sprite_id,  -- sprite override (use sprite from config = sprite 5)
 			light_dir,  -- light direction (directional light)
 			nil,  -- light radius (unused for directional)
 			light_brightness,  -- light brightness
@@ -1122,5 +1226,31 @@ function _draw()
 			local y = 208 + flr(i / 32) * 4
 			rectfill(x, y, x + 3, y + 3, i)
 		end
+	end
+
+	-- Draw velocity lines on top of everything (stationary in world space)
+	for _, line_segment in ipairs(particle_trails) do
+		-- Fade based on lifetime
+		local alpha = 1 - (line_segment.age / line_segment.lifetime)
+
+		-- Calculate distance from ship to line start point
+		local dx = line_segment.x1 - Config.ship.position.x
+		local dy = line_segment.y1 - Config.ship.position.y
+		local dz = line_segment.z1 - Config.ship.position.z
+		local dist_from_ship = sqrt(dx * dx + dy * dy + dz * dz)
+
+		-- Color based on distance from ship (gradient from near to far)
+		-- Near = bright cyan (13), Far = dim purple (5)
+		local max_dist = 40
+		local dist_factor = min(1, max(0, dist_from_ship / max_dist))
+		local color = flr(Config.particles.color_far + (Config.particles.color_near - Config.particles.color_far) * (1 - dist_factor))
+
+		-- Also fade color with lifetime
+		color = flr(color - (1 - alpha) * 3)
+		color = max(1, color)  -- Prevent black
+
+		-- Draw the velocity line
+		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
+		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 end
