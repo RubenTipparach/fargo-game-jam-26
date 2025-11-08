@@ -76,6 +76,11 @@ local rotation_progress = 0  -- Accumulator for SLERP (0 to 1)
 local raycast_x = nil
 local raycast_z = nil
 
+-- Game state
+local current_health = Config.health.max_health
+local is_dead = false
+local death_time = 0
+
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
 function generate_stars()
@@ -504,6 +509,101 @@ local function quat_slerp(q1, q2, max_turn_rate)
 	}
 end
 
+-- ============================================
+-- PHYSICS AND COLLISION
+-- ============================================
+
+-- Draw wireframe box for debug
+local function draw_box_wireframe(min_x, min_y, min_z, max_x, max_y, max_z, camera, color)
+	-- 8 corners of the box
+	local corners = {
+		{min_x, min_y, min_z}, {max_x, min_y, min_z},
+		{max_x, max_y, min_z}, {min_x, max_y, min_z},
+		{min_x, min_y, max_z}, {max_x, min_y, max_z},
+		{max_x, max_y, max_z}, {min_x, max_y, max_z},
+	}
+
+	-- 12 edges of the box
+	local edges = {
+		{1,2}, {2,3}, {3,4}, {4,1},  -- Front face
+		{5,6}, {6,7}, {7,8}, {8,5},  -- Back face
+		{1,5}, {2,6}, {3,7}, {4,8},  -- Connecting edges
+	}
+
+	for _, edge in ipairs(edges) do
+		local c1 = corners[edge[1]]
+		local c2 = corners[edge[2]]
+		draw_line_3d(c1[1], c1[2], c1[3], c2[1], c2[2], c2[3], camera, color)
+	end
+end
+
+-- Draw wireframe sphere for debug
+local function draw_sphere_wireframe(cx, cy, cz, radius, camera, color)
+	local segments = 16
+	local stacks = 8
+
+	-- Draw latitude circles
+	for stack = 0, stacks do
+		local v = stack / stacks
+		local angle_v = v * 0.5  -- Angle from top
+		local y = cy + cos(angle_v) * radius
+		local ring_radius = sin(angle_v) * radius
+
+		for seg = 0, segments do
+			local angle_h = seg / segments
+			local angle_h_next = (seg + 1) / segments
+
+			local x1 = cx + cos(angle_h * 2 * 3.14159) * ring_radius
+			local z1 = cz + sin(angle_h * 2 * 3.14159) * ring_radius
+			local x2 = cx + cos(angle_h_next * 2 * 3.14159) * ring_radius
+			local z2 = cz + sin(angle_h_next * 2 * 3.14159) * ring_radius
+
+			draw_line_3d(x1, y, z1, x2, y, z2, camera, color)
+		end
+	end
+
+	-- Draw longitude lines
+	for seg = 0, segments / 2 do
+		local angle_h = seg / segments
+
+		for stack = 0, stacks - 1 do
+			local v = stack / stacks
+			local v_next = (stack + 1) / stacks
+			local angle_v = v * 0.5
+			local angle_v_next = v_next * 0.5
+
+			local y1 = cy + cos(angle_v) * radius
+			local y2 = cy + cos(angle_v_next) * radius
+			local ring_r1 = sin(angle_v) * radius
+			local ring_r2 = sin(angle_v_next) * radius
+
+			local x1 = cx + cos(angle_h * 2 * 3.14159) * ring_r1
+			local z1 = cz + sin(angle_h * 2 * 3.14159) * ring_r1
+			local x2 = cx + cos(angle_h * 2 * 3.14159) * ring_r2
+			local z2 = cz + sin(angle_h * 2 * 3.14159) * ring_r2
+
+			draw_line_3d(x1, y1, z1, x2, y2, z2, camera, color)
+		end
+	end
+end
+
+-- Box vs Sphere collision detection
+-- Returns true if colliding
+local function check_box_sphere_collision(box_min, box_max, sphere_center, sphere_radius)
+	-- Find closest point on box to sphere center
+	local closest_x = max(box_min.x, min(sphere_center.x, box_max.x))
+	local closest_y = max(box_min.y, min(sphere_center.y, box_max.y))
+	local closest_z = max(box_min.z, min(sphere_center.z, box_max.z))
+
+	-- Calculate distance between sphere center and closest point
+	local dx = sphere_center.x - closest_x
+	local dy = sphere_center.y - closest_y
+	local dz = sphere_center.z - closest_z
+	local distance = sqrt(dx * dx + dy * dy + dz * dz)
+
+	return distance < sphere_radius
+end
+
 -- Model data
 local model_shippy = nil
 local model_sphere = nil
@@ -911,6 +1011,41 @@ function _update()
 
 	-- Update planet rotation
 	planet_rotation = planet_rotation + Config.planet.spin_speed
+
+	-- Check collisions with planet (only if not already dead)
+	if not is_dead then
+		local ship_collider = Config.ship.collider
+		local planet_collider = Config.planet.collider
+
+		-- Calculate ship box bounds (world space)
+		local ship_pos = Config.ship.position
+		local ship_box_min = {
+			x = ship_pos.x - ship_collider.half_size.x,
+			y = ship_pos.y - ship_collider.half_size.y,
+			z = ship_pos.z - ship_collider.half_size.z,
+		}
+		local ship_box_max = {
+			x = ship_pos.x + ship_collider.half_size.x,
+			y = ship_pos.y + ship_collider.half_size.y,
+			z = ship_pos.z + ship_collider.half_size.z,
+		}
+
+		-- Calculate planet sphere center
+		local planet_pos = Config.planet.position
+		local planet_center = {
+			x = planet_pos.x,
+			y = planet_pos.y,
+			z = planet_pos.z,
+		}
+
+		-- Check collision
+		if check_box_sphere_collision(ship_box_min, ship_box_max, planet_center, planet_collider.radius) then
+			-- Collision detected!
+			current_health = 0
+			is_dead = true
+			death_time = 0
+		end
+	end
 end
 
 -- Draw sun as a billboard sprite positioned opposite to light direction
@@ -980,7 +1115,7 @@ function _draw()
 			ambient,  -- ambient light
 			false,  -- is_ground
 			planet_rot.pitch, planet_rotation, planet_rot.roll,  -- Use planet_rotation for yaw
-			Config.rendering.render_distance
+			Config.camera.render_distance
 		)
 
 		-- Add planet faces to all_faces
@@ -1004,7 +1139,7 @@ function _draw()
 			ambient,  -- ambient light
 			false,  -- is_ground
 			ship_rot.pitch, ship_yaw, ship_rot.roll,  -- Use direction-derived yaw
-			Config.rendering.render_distance
+			Config.camera.render_distance
 		)
 
 		-- Add all faces
@@ -1060,8 +1195,8 @@ function _draw()
 			-- SLERP between current and target for smooth arc
 			local q1_current = dir_to_quat(ship_heading_dir)
 			local q1_target = dir_to_quat(target_heading_dir)
-			local q_arc1 = quat_slerp(q1_current, q1_target, t1 * 100)  -- Large multiplier to get full path
-			local q_arc2 = quat_slerp(q1_current, q1_target, t2 * 100)
+			local q_arc1 = quat_slerp(q1_current, q1_target, t1)
+			local q_arc2 = quat_slerp(q1_current, q1_target, t2)
 
 			local dir1 = quat_to_dir(q_arc1)
 			local dir2 = quat_to_dir(q_arc2)
@@ -1112,20 +1247,22 @@ function _draw()
 		print("cpu: " .. flr(cpu) .. "%", 380, 2, cpu > 80 and 8 or 7)
 	end
 
-	-- Camera angles display
-	print("cam pitch: " .. flr(camera.rx * 100) / 100, 2, 2, 7)
-	print("cam yaw: " .. flr(camera.ry * 100) / 100, 2, 10, 7)
-	print("ship dir: (" .. flr(ship_heading_dir.x * 100) / 100 .. "," .. flr(ship_heading_dir.z * 100) / 100 .. ")", 2, 18, 7)
-	print("target dir: (" .. flr(target_heading_dir.x * 100) / 100 .. "," .. flr(target_heading_dir.z * 100) / 100 .. ")", 2, 26, 7)
+	if (Config.debug) then
+		-- Camera angles display
+		print("cam pitch: " .. flr(camera.rx * 100) / 100, 2, 2, 7)
+		print("cam yaw: " .. flr(camera.ry * 100) / 100, 2, 10, 7)
+		print("ship dir: (" .. flr(ship_heading_dir.x * 100) / 100 .. "," .. flr(ship_heading_dir.z * 100) / 100 .. ")", 2, 18, 7)
+		print("target dir: (" .. flr(target_heading_dir.x * 100) / 100 .. "," .. flr(target_heading_dir.z * 100) / 100 .. ")", 2, 26, 7)
 
-	-- Raycast debug display
-	if raycast_x and raycast_z then
-		print("raycast x: " .. flr(raycast_x * 10) / 10, 2, 34, 7)
-		print("raycast z: " .. flr(raycast_z * 10) / 10, 2, 42, 7)
-	else
-		print("raycast: nil", 2, 34, 8)
+		-- Raycast debug display
+		if raycast_x and raycast_z then
+			print("raycast x: " .. flr(raycast_x * 10) / 10, 2, 34, 7)
+			print("raycast z: " .. flr(raycast_z * 10) / 10, 2, 42, 7)
+		else
+			print("raycast: nil", 2, 34, 8)
+		end
 	end
-
+	
 	-- Lighting debug (only visible when Config.debug_lighting is true)
 	if Config.debug_lighting then
 		-- Light rotation info
@@ -1263,5 +1400,89 @@ function _draw()
 		-- Draw the velocity line (draws on top of model since it's after model rendering)
 		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
+	end
+
+	-- Draw physics debug wireframes if enabled
+	if Config.debug_physics then
+		-- Draw ship collider wireframe
+		local ship_collider = Config.ship.collider
+		local ship_pos = Config.ship.position
+		local ship_box_min_x = ship_pos.x - ship_collider.half_size.x
+		local ship_box_min_y = ship_pos.y - ship_collider.half_size.y
+		local ship_box_min_z = ship_pos.z - ship_collider.half_size.z
+		local ship_box_max_x = ship_pos.x + ship_collider.half_size.x
+		local ship_box_max_y = ship_pos.y + ship_collider.half_size.y
+		local ship_box_max_z = ship_pos.z + ship_collider.half_size.z
+		draw_box_wireframe(ship_box_min_x, ship_box_min_y, ship_box_min_z,
+		                   ship_box_max_x, ship_box_max_y, ship_box_max_z, camera, 3)  -- Cyan box
+
+		-- Draw planet collider wireframe
+		local planet_collider = Config.planet.collider
+		local planet_pos = Config.planet.position
+		draw_sphere_wireframe(planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+	end
+
+	-- Draw health bar at top left
+	local health_config = Config.health
+	local health_bar_x = health_config.health_bar_x
+	local health_bar_y = health_config.health_bar_y
+	local health_bar_width = health_config.health_bar_width
+	local health_bar_height = health_config.health_bar_height
+
+	-- Health bar background (black)
+	rectfill(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 0)
+
+	-- Health bar fill (green -> red based on health)
+	local health_percent = current_health / Config.health.max_health
+	local fill_width = health_bar_width * health_percent
+	local health_color = health_percent > 0.5 and 3 or (health_percent > 0.25 and 8 or 8)  -- Green if >50%, yellow if >25%, red if <=25%
+	if health_percent > 0.5 then
+		health_color = 11  -- Bright green/cyan
+	elseif health_percent > 0.25 then
+		health_color = 10  -- Yellow
+	else
+		health_color = 8  -- Red
+	end
+	if fill_width > 0 then
+		rectfill(health_bar_x, health_bar_y, health_bar_x + fill_width, health_bar_y + health_bar_height, health_color)
+	end
+
+	-- Health bar border (white)
+	rect(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 7)
+
+	-- Health text
+	local health_display = flr(current_health)
+	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
+
+	-- Death screen (with 2 second delay before showing)
+	if is_dead then
+		death_time = death_time + (1 / 60)  -- Add one frame's worth of time
+
+		if death_time >= Config.health.death_screen_delay then
+			-- Semi-transparent black overlay
+			for y = 0, 135 do
+				line(0, y, 479, y, 0)
+			end
+
+			-- Death message (centered on screen)
+			print("YOU DIED", 210, 60, 8)  -- Red text
+
+			-- Restart prompt
+			print("Press R to restart", 180, 100, 7)  -- White text
+
+			-- Check for restart input
+			if btn(4) then  -- R button
+				-- Reset game state
+				is_dead = false
+				current_health = Config.health.max_health
+				death_time = 0
+				Config.ship.position = {x = 0, y = 0, z = 0}
+				ship_speed = 0
+				target_ship_speed = 0
+				particle_trails = {}
+				ship_heading_dir = {x = 0, z = 1}
+				target_heading_dir = {x = 0, z = 1}
+			end
+		end
 	end
 end

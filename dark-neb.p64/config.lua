@@ -7,6 +7,7 @@ local Config = {}
 Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
+Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
 
 -- Star configuration
 Config.stars = {
@@ -35,7 +36,7 @@ Config.camera = {
 	rx = 0.05,  -- Initial rotation X (0.25 = looking straight down)
 	ry = -0.36,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
-	-- TODO ADD RENDER DISTANCE HERE
+	render_distance = 200,  -- Maximum distance for rendering objects
 }
 
 -- Ship/Model configuration
@@ -52,6 +53,11 @@ Config.ship = {
 	turn_rate = 0.0008,  -- Turns per frame (higher = faster turns)
 	heading_arc_radius = 5,  -- Radius of the heading arc indicator
 	heading_arc_segments = 16,  -- Number of segments for the arc
+	-- Box collider for collision detection
+	collider = {
+		type = "box",
+		half_size = {x = 2, y = 1.5, z = 3},  -- Half-extents of the box
+	},
 }
 
 -- Sphere configuration
@@ -72,6 +78,11 @@ Config.planet = {
 	stacks = 6,
 	sprite_id = 24,  -- Sprite to use for texture
 	spin_speed = 0.0001,  -- Rotation speed (faster for visibility)
+	-- Sphere collider for collision detection
+	collider = {
+		type = "sphere",
+		radius = 20,  -- Match the planet radius
+	},
 }
 
 -- Sun configuration (billboard sprite in skybox)
@@ -92,7 +103,6 @@ Config.lighting = {
 
 -- Rendering configuration
 Config.rendering = {
-	render_distance = 200,  -- Increased for distant objects like planet
 	clear_color = 0,  -- Dark blue/black background
 }
 
@@ -112,6 +122,16 @@ Config.particles = {
 -- Crosshair configuration
 Config.crosshair = {
 	max_distance = 4,  -- Only show crosshair if within this distance from ship on XZ plane
+}
+
+-- Health and gameplay configuration
+Config.health = {
+	max_health = 100,
+	death_screen_delay = 2.0,  -- Seconds to show before death screen
+	health_bar_width = 150,
+	health_bar_height = 10,
+	health_bar_x = 10,  -- Top left X position
+	health_bar_y = 10,  -- Top left Y position
 }
 
 return Config
