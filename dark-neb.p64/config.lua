@@ -103,10 +103,9 @@ Config.particles = {
 	spawn_rate = 0.05,  -- Rate at which particles spawn (lower = faster spawning)
 	line_length = 2,  -- Length of particle lines in 3D units
 	base_color = 11,  -- Base particle color (bright cyan)
-	-- Color variation by depth (far = dimmer, near = brighter)
-	color_by_depth = true,  -- Enable color variation based on depth
-	color_near = 13,  -- Color when particle is near camera
-	color_far = 5,  -- Color when particle is far from camera
+	-- Color palette based on distance from ship (closest to farthest)
+	color_palette = {28, 12, 7, 6, 13, 1},  -- 6 colors from closest to farthest
+	max_dist = 30,  -- Maximum distance for color distribution
 }
 
 return Config

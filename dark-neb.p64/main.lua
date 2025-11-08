@@ -1229,25 +1229,29 @@ function _draw()
 	end
 
 	-- Draw velocity lines on top of everything (stationary in world space)
-	for _, line_segment in ipairs(particle_trails) do
-		-- Fade based on lifetime
-		local alpha = 1 - (line_segment.age / line_segment.lifetime)
+	-- Reset drawing state to ensure lines render with correct colors
+	fillp()
+	palt()
 
+	for _, line_segment in ipairs(particle_trails) do
 		-- Calculate distance from ship to line start point
 		local dx = line_segment.x1 - Config.ship.position.x
 		local dy = line_segment.y1 - Config.ship.position.y
 		local dz = line_segment.z1 - Config.ship.position.z
 		local dist_from_ship = sqrt(dx * dx + dy * dy + dz * dz)
 
-		-- Color based on distance from ship (gradient from near to far)
-		-- Near = bright cyan (13), Far = dim purple (5)
-		local max_dist = 40
-		local dist_factor = min(1, max(0, dist_from_ship / max_dist))
-		local color = flr(Config.particles.color_far + (Config.particles.color_near - Config.particles.color_far) * (1 - dist_factor))
+		-- Color based on distance from ship using discrete palette
+		-- Palette: {28, 12, 7, 6, 13, 1} from closest to farthest
+		local palette = Config.particles.color_palette
+		local palette_size = #palette
+		local max_dist = Config.particles.max_dist
 
-		-- Also fade color with lifetime
-		color = flr(color - (1 - alpha) * 3)
-		color = max(1, color)  -- Prevent black
+		-- Map distance to palette index (0-1 normalized, then to palette index)
+		local dist_factor = min(1, max(0, dist_from_ship / max_dist))
+		local palette_index = flr(dist_factor * palette_size) + 1
+		palette_index = min(palette_size, palette_index)
+
+		local color = palette[palette_index]
 
 		-- Draw the velocity line
 		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
