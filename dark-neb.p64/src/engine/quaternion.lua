@@ -2,7 +2,6 @@
 -- Quaternions are represented as {x, y, z, w} where w is the scalar component
 
 local Quat = {}
-local MathUtils = require("engine.math_utils")
 
 -- Create a new quaternion
 function Quat.new(x, y, z, w)
@@ -80,7 +79,7 @@ function Quat.normalize(q)
 	if len_sq < 0.0001 then
 		return Quat.identity()
 	end
-	local inv_len = MathUtils.fast_inv_sqrt(len_sq)
+	local inv_len = 1 / sqrt(len_sq)
 	return {
 		x = q.x * inv_len,
 		y = q.y * inv_len,
@@ -119,7 +118,8 @@ function Quat.slerp(q1, q2, t)
 	end
 
 	-- If very close, use linear interpolation
-	if dot > 0.9995 then
+	if dot > 0.99999 then
+		printh("  SLERP: Using linear interp (dot=" .. flr(dot*100000)/100000 .. " > 0.99999)")
 		return Quat.normalize({
 			x = q1.x + t * (q2.x - q1.x),
 			y = q1.y + t * (q2.y - q1.y),
@@ -128,9 +128,26 @@ function Quat.slerp(q1, q2, t)
 		})
 	end
 
-	-- Spherical interpolation
-	local theta = acos(dot)
+	-- Clamp dot to valid range
+	if dot > 1 then dot = 1 end
+	if dot < -1 then dot = -1 end
+
+	-- Spherical interpolation - use atan2 instead of acos
+	-- theta = acos(dot) = atan2(sqrt(1 - dot^2), dot)
+	local theta = atan2(sqrt(1 - dot * dot), dot)
 	local sin_theta = sin(theta)
+
+	-- Handle case where sin_theta is very small (avoid division by zero)
+	local abs_sin_theta = sin_theta < 0 and -sin_theta or sin_theta
+	if abs_sin_theta < 0.001 then
+		return Quat.normalize({
+			x = q1.x + t * (q2.x - q1.x),
+			y = q1.y + t * (q2.y - q1.y),
+			z = q1.z + t * (q2.z - q1.z),
+			w = q1.w + t * (q2.w - q1.w)
+		})
+	end
+
 	local a = sin((1 - t) * theta) / sin_theta
 	local b = sin(t * theta) / sin_theta
 
@@ -157,7 +174,7 @@ function Quat.look_at(eye, target, up)
 	if flen_sq < 0.0001 then
 		return Quat.identity()
 	end
-	local inv_flen = MathUtils.fast_inv_sqrt(flen_sq)
+	local inv_flen = 1 / sqrt(flen_sq)
 	fx, fy, fz = fx * inv_flen, fy * inv_flen, fz * inv_flen
 
 	-- Calculate right vector (cross product: forward x up)
@@ -169,7 +186,7 @@ function Quat.look_at(eye, target, up)
 		-- Forward and up are parallel, choose arbitrary right
 		rx, ry, rz = 1, 0, 0
 	else
-		local inv_rlen = MathUtils.fast_inv_sqrt(rlen_sq)
+		local inv_rlen = 1 / sqrt(rlen_sq)
 		rx, ry, rz = rx * inv_rlen, ry * inv_rlen, rz * inv_rlen
 	end
 

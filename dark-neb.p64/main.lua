@@ -21,6 +21,7 @@ Lighting = include("src/lighting.lua")
 Renderer = include("src/engine/renderer.lua")
 RendererLit = include("src/engine/renderer_lit.lua")
 RenderFlat = include("src/engine/render_flat.lua")
+Quat = include("src/engine/quaternion.lua")
 Config = include("config.lua")
 
 -- ============================================
@@ -64,9 +65,12 @@ local light_pitch = Config.lighting.pitch
 local light_brightness = Config.lighting.brightness
 local ambient = Config.lighting.ambient
 
--- Ship heading control
-local ship_heading = Config.ship.heading
-local target_heading = Config.ship.target_heading
+-- Ship heading control - using direction vectors instead of angles
+-- Initialize heading as direction vector (start facing +Z)
+local ship_heading_dir = {x = 0, z = 1}  -- Start facing +Z
+local target_heading_dir = {x = 0, z = 1}
+local rotation_start_dir = {x = 0, z = 1}  -- Starting direction when rotation begins
+local rotation_progress = 0  -- Accumulator for SLERP (0 to 1)
 
 -- Raycast intersection for visualization
 local raycast_x = nil
@@ -352,6 +356,154 @@ function draw_line_3d(x1, y1, z1, x2, y2, z2, camera, color)
 	end
 end
 
+-- Quaternion-based rotation system
+-- Convert direction vector (2D on XZ plane) to quaternion (rotation around Y axis)
+local function dir_to_quat(dir)
+	-- Normalize direction
+	local len = sqrt(dir.x * dir.x + dir.z * dir.z)
+	if len < 0.0001 then
+		-- Default to identity (no rotation, facing +Z)
+		return {w = 1, x = 0, y = 0, z = 0}
+	end
+	local norm_x = dir.x / len
+	local norm_z = dir.z / len
+
+	-- Quaternion for rotation around Y axis
+	-- For direction (x, z), we need rotation from (0, 1) to (x, z)
+	-- Using half-angle formula for Y-axis rotation quaternion:
+	-- q = (cos(θ/2), 0, sin(θ/2), 0) where θ is angle from +Z axis
+
+	-- cos(θ) = dot product with +Z = norm_z
+	-- sin(θ) = cross product with +Z = norm_x (for Y component)
+
+	-- Half-angle formulas:
+	-- cos(θ/2) = sqrt((1 + cos(θ)) / 2)
+	-- sin(θ/2) = sign(sin(θ)) * sqrt((1 - cos(θ)) / 2)
+
+	local cos_theta = norm_z
+	local sin_theta = norm_x
+
+	local half_cos = sqrt((1 + cos_theta) / 2)
+	local half_sin = (sin_theta >= 0 and 1 or -1) * sqrt((1 - cos_theta) / 2)
+
+	return {
+		w = half_cos,
+		x = 0,
+		y = half_sin,  -- Rotation around Y axis
+		z = 0
+	}
+end
+
+-- Convert quaternion back to direction vector (2D on XZ plane)
+local function quat_to_dir(q)
+	-- For Y-axis rotation, extract direction by rotating (0, 0, 1) by quaternion
+	-- Using quaternion rotation formula: v' = q * v * q^-1
+	-- For unit quaternion and v = (0, 0, 1):
+	-- x' = 2(xz + wy)
+	-- z' = 1 - 2(x² + y²)
+
+	local x = 2 * (q.x * q.z + q.w * q.y)
+	local z = 1 - 2 * (q.x * q.x + q.y * q.y)
+
+	-- Normalize to ensure unit vector (handles floating point errors)
+	local len = sqrt(x * x + z * z)
+	if len > 0.0001 then
+		x = x / len
+		z = z / len
+	end
+
+	return {x = x, z = z}
+end
+
+-- Convert direction vector to angle (in turns, 0-1 range)
+-- For rendering AND verification - used to check rotation progress
+local function dir_to_angle(dir)
+	-- atan2(y, x) in Picotron returns angle in turns (0-1 range)
+	return atan2(dir.x, dir.z)
+end
+
+-- Calculate angle difference between two directions (in turns, 0-1 range)
+-- Returns the shortest angular distance between two directions
+local function angle_difference(dir1, dir2)
+	local angle1 = dir_to_angle(dir1)
+	local angle2 = dir_to_angle(dir2)
+
+	-- Calculate difference and wrap to [-0.5, 0.5] range (shortest path)
+	local diff = angle2 - angle1
+	if diff > 0.5 then
+		diff = diff - 1
+	elseif diff < -0.5 then
+		diff = diff + 1
+	end
+
+	-- Return absolute value
+	if diff < 0 then
+		return -diff
+	else
+		return diff
+	end
+end
+
+-- Quaternion SLERP with max turn rate
+local function quat_slerp(q1, q2, max_turn_rate)
+	-- Calculate dot product
+	local dot = q1.w * q2.w + q1.x * q2.x + q1.y * q2.y + q1.z * q2.z
+
+	-- If dot < 0, negate q2 to take shorter path
+	if dot < 0 then
+		q2 = {w = -q2.w, x = -q2.x, y = -q2.y, z = -q2.z}
+		dot = -dot
+	end
+
+	-- Clamp dot to valid range
+	if dot > 1 then dot = 1 end
+	if dot < -1 then dot = -1 end
+
+	-- Calculate angle between quaternions (in turns)
+	-- acos(dot) gives angle in turns (Picotron's acos equivalent)
+	-- We need: theta = acos(dot)
+	-- Using: acos(x) = atan2(sqrt(1-x²), x)
+	local theta = atan2(sqrt(1 - dot * dot), dot)
+
+	-- Limit to max turn rate
+	if theta > max_turn_rate then
+		theta = max_turn_rate
+	end
+
+	-- Calculate full angle for interpolation factor
+	local full_theta = atan2(sqrt(1 - dot * dot), dot)
+
+	-- If already at target, return q1
+	if full_theta < 0.00001 then
+		return {w = q1.w, x = q1.x, y = q1.y, z = q1.z}
+	end
+
+	local t = theta / full_theta
+
+	-- Perform SLERP
+	local sin_full = sin(full_theta)
+	if abs(sin_full) < 0.0001 then
+		-- Linear interpolation fallback
+		local result_w = q1.w + t * (q2.w - q1.w)
+		local result_x = q1.x + t * (q2.x - q1.x)
+		local result_y = q1.y + t * (q2.y - q1.y)
+		local result_z = q1.z + t * (q2.z - q1.z)
+		-- Normalize
+		local len = sqrt(result_w*result_w + result_x*result_x + result_y*result_y + result_z*result_z)
+		return {w = result_w/len, x = result_x/len, y = result_y/len, z = result_z/len}
+	end
+
+	local a = sin((1 - t) * full_theta) / sin_full
+	local b = sin(t * full_theta) / sin_full
+
+	return {
+		w = a * q1.w + b * q2.w,
+		x = a * q1.x + b * q2.x,
+		y = a * q1.y + b * q2.y,
+		z = a * q1.z + b * q2.z
+	}
+end
+
 -- Model data
 local model_shippy = nil
 local model_sphere = nil
@@ -570,16 +722,37 @@ function _update()
 				printh("  Error: dx=" .. flr(verify_px - mx) .. " dy=" .. flr(verify_py - my))
 			end
 
-			-- Calculate direction from ship to target point
+			-- Calculate direction from ship to target point (normalized)
 			local ship_x = Config.ship.position.x
 			local ship_z = Config.ship.position.z
-			local dx = raycast_x - ship_x
-			local dz = raycast_z - ship_z
+			local dir_x = raycast_x - ship_x
+			local dir_z = raycast_z - ship_z
 
-			-- Calculate target heading (atan2 gives angle in turns, 0-1 range)
-			-- We want 0 = +Z axis, so we use atan2(dx, dz)
-			-- atan2 in Picotron returns turns (0-1), not radians
-			target_heading = atan2(dx, dz)
+			-- Normalize direction vector
+			local len = sqrt(dir_x * dir_x + dir_z * dir_z)
+			if len > 0.0001 then
+				target_heading_dir = {x = dir_x / len, z = dir_z / len}
+				rotation_start_dir = {x = ship_heading_dir.x, z = ship_heading_dir.z}  -- Store current as start
+				rotation_progress = 0  -- Reset accumulator when target changes
+
+				-- Log heading directions and positions for debugging
+				printh("  Ship heading dir: (" .. flr(ship_heading_dir.x*1000)/1000 .. "," .. flr(ship_heading_dir.z*1000)/1000 .. ")")
+				printh("  Target heading dir: (" .. flr(target_heading_dir.x*1000)/1000 .. "," .. flr(target_heading_dir.z*1000)/1000 .. ")")
+
+				-- Calculate and log the current heading position (blue line)
+				local current_heading_x = ship_x + ship_heading_dir.x * Config.ship.heading_arc_radius
+				local current_heading_z = ship_z + ship_heading_dir.z * Config.ship.heading_arc_radius
+				printh("  Current heading pos (blue): (" .. flr(current_heading_x*10)/10 .. "," .. flr(current_heading_z*10)/10 .. ")")
+
+				-- Calculate and log the planned heading position (yellow line)
+				local planned_x = ship_x + target_heading_dir.x * Config.ship.heading_arc_radius
+				local planned_z = ship_z + target_heading_dir.z * Config.ship.heading_arc_radius
+				printh("  Planned heading pos (yellow): (" .. flr(planned_x*10)/10 .. "," .. flr(planned_z*10)/10 .. ")")
+
+				-- Calculate dot product to show how different they are
+				local dot = ship_heading_dir.x * target_heading_dir.x + ship_heading_dir.z * target_heading_dir.z
+				printh("  Heading dot product: " .. flr(dot * 1000) / 1000)
+			end
 		else
 			printh("Raycast FAILED: returned nil")
 		end
@@ -611,29 +784,54 @@ function _update()
 	-- Smooth ship speed (lerp towards target)
 	ship_speed = ship_speed + (target_ship_speed - ship_speed) * Config.ship.speed_smoothing
 
-	-- Smooth ship heading rotation towards target
-	-- Calculate shortest rotation direction (handle wrap-around)
-	-- Normalize both angles to [0, 1) first
-	local normalized_target = target_heading % 1.0
-	local normalized_current = ship_heading % 1.0
+	-- Simple rotation: rotate direction vector at constant angular velocity
+	-- Calculate angle to target using atan2 (returns angle in turns, 0-1 range)
+	local current_angle = atan2(ship_heading_dir.x, ship_heading_dir.z)
+	local target_angle = atan2(target_heading_dir.x, target_heading_dir.z)
 
-	-- Calculate difference and wrap to [-0.5, 0.5] for shortest path
-	local heading_diff = normalized_target - normalized_current
-	if heading_diff > 0.5 then
-		heading_diff = heading_diff - 1.0
-	elseif heading_diff < -0.5 then
-		heading_diff = heading_diff + 1.0
+	-- Calculate shortest angular difference (wraps around 0/1 boundary)
+	local angle_diff = target_angle - current_angle
+	if angle_diff > 0.5 then
+		angle_diff = angle_diff - 1
+	elseif angle_diff < -0.5 then
+		angle_diff = angle_diff + 1
 	end
 
-	-- Apply turn rate (limit rotation speed)
-	local turn_amount = mid(-Config.ship.turn_rate, heading_diff, Config.ship.turn_rate)
-	ship_heading = (ship_heading + turn_amount) % 1.0
+	-- Only rotate if not already at target (tolerance: 0.0001 turns)
+	if abs(angle_diff) > 0.0001 then
+		-- Always rotate at constant turn_rate
+		-- Determine direction: positive or negative
+		local rotation_amount = angle_diff > 0 and Config.ship.turn_rate or -Config.ship.turn_rate
+
+		-- If we're very close, clamp to exact target to avoid overshoot
+		-- if abs(angle_diff) < abs(rotation_amount) then
+		-- 	rotation_amount = angle_diff
+		-- end
+
+		-- Debug: print rotation info
+		printh("Rotation: angle_diff=" .. flr(angle_diff*10000)/10000 .. " rotation_amount=" .. flr(rotation_amount*10000)/10000 .. " turn_rate=" .. Config.ship.turn_rate)
+
+		-- Apply rotation to current angle
+		local new_angle = current_angle + rotation_amount
+		printh("Rotation: old_angle=" .. current_angle .. " new_angle=" .. new_angle)
+		
+		-- Convert back to direction vector
+		ship_heading_dir.x = cos(new_angle)
+		ship_heading_dir.z = sin(new_angle)
+
+		-- Normalize to ensure unit vector (handle floating point drift)
+		local len = sqrt(ship_heading_dir.x * ship_heading_dir.x + ship_heading_dir.z * ship_heading_dir.z)
+		if len > 0.0001 then
+			ship_heading_dir.x = ship_heading_dir.x / len
+			ship_heading_dir.z = ship_heading_dir.z / len
+		end
+	end
 
 	-- Move ship in direction of heading based on speed
 	if ship_speed > 0.01 then
 		local move_speed = ship_speed * Config.ship.max_speed * 0.1  -- Scale for reasonable movement
-		Config.ship.position.x = Config.ship.position.x + sin(ship_heading) * move_speed
-		Config.ship.position.z = Config.ship.position.z + cos(ship_heading) * move_speed
+		Config.ship.position.x = Config.ship.position.x + ship_heading_dir.x * move_speed
+		Config.ship.position.z = Config.ship.position.z + ship_heading_dir.z * move_speed
 	end
 
 	-- Camera follows ship (focus point tracks ship position)
@@ -691,6 +889,7 @@ function _draw()
 	if model_shippy then
 		local ship_pos = Config.ship.position
 		local ship_rot = Config.ship.rotation
+		local ship_yaw = dir_to_angle(ship_heading_dir) + 0.25  -- Convert direction to angle, add 90° offset for model alignment
 		local shippy_faces = RendererLit.render_mesh(
 			model_shippy.verts, model_shippy.faces, camera,
 			ship_pos.x, ship_pos.y, ship_pos.z,
@@ -700,7 +899,7 @@ function _draw()
 			light_brightness,  -- light brightness
 			ambient,  -- ambient light
 			false,  -- is_ground
-			ship_rot.pitch, ship_heading, ship_rot.roll,  -- Use ship_heading for yaw
+			ship_rot.pitch, ship_yaw, ship_rot.roll,  -- Use direction-derived yaw
 			Config.rendering.render_distance
 		)
 
@@ -720,53 +919,55 @@ function _draw()
 	if raycast_x and raycast_z then
 		local cross_size = 0.5  -- Size of crosshair arms
 		-- Draw crosshair on the ground plane (y=0)
-		draw_line_3d(raycast_x - cross_size, 0, raycast_z, raycast_x + cross_size, 0, raycast_z, camera, 12)  -- Horizontal line (red)
-		draw_line_3d(raycast_x, 0, raycast_z - cross_size, raycast_x, 0, raycast_z + cross_size, camera, 12)  -- Vertical line (red)
+		draw_line_3d(raycast_x - cross_size, 0, raycast_z, raycast_x + cross_size, 0, raycast_z, camera, 8)  -- Horizontal line (red)
+		draw_line_3d(raycast_x, 0, raycast_z - cross_size, raycast_x, 0, raycast_z + cross_size, camera, 8)  -- Vertical line (red)
 	end
 
-	-- Draw heading arc (shows ship's turn path)
-	-- Use same shortest-path calculation as movement
-	local normalized_target = target_heading % 1.0
-	local normalized_current = ship_heading % 1.0
-	local heading_diff = normalized_target - normalized_current
-	if heading_diff > 0.5 then
-		heading_diff = heading_diff - 1.0
-	elseif heading_diff < -0.5 then
-		heading_diff = heading_diff + 1.0
-	end
+	-- Draw heading compass (arc, heading lines) only when not at target
+	-- Calculate angle difference to see if we need to draw the compass
+	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
 
-	-- Only draw arc if there's a significant heading difference (0.01 turns ≈ 3.6 degrees)
-	if abs(heading_diff) > 0.01 then
+	-- Only draw compass if there's a significant difference (tolerance 0.01 turns)
+	if angle_diff > 0.01 then
 		local ship_x = Config.ship.position.x
 		local ship_z = Config.ship.position.z
 		local arc_radius = Config.ship.heading_arc_radius
 		local segments = Config.ship.heading_arc_segments
 
-		-- Draw arc from current heading to target heading
-		local start_angle = ship_heading
+		-- Draw current ship heading line (blue/cyan)
+		local current_x = ship_x + ship_heading_dir.x * arc_radius
+		local current_z = ship_z + ship_heading_dir.z * arc_radius
+		draw_line_3d(ship_x, 0, ship_z, current_x, 0, current_z, camera, 13)  -- Blue (cyan)
+
+		-- Draw arc by interpolating between current and target directions
 		local arc_color = 10  -- Yellow
 
 		for i = 0, segments - 1 do
 			local t1 = i / segments
 			local t2 = (i + 1) / segments
 
-			-- Interpolate angle
-			local angle1 = start_angle + heading_diff * t1
-			local angle2 = start_angle + heading_diff * t2
+			-- SLERP between current and target for smooth arc
+			local q1_current = dir_to_quat(ship_heading_dir)
+			local q1_target = dir_to_quat(target_heading_dir)
+			local q_arc1 = quat_slerp(q1_current, q1_target, t1 * 100)  -- Large multiplier to get full path
+			local q_arc2 = quat_slerp(q1_current, q1_target, t2 * 100)
+
+			local dir1 = quat_to_dir(q_arc1)
+			local dir2 = quat_to_dir(q_arc2)
 
 			-- Calculate 3D positions on the arc
-			local x1 = ship_x + sin(angle1) * arc_radius
-			local z1 = ship_z + cos(angle1) * arc_radius
-			local x2 = ship_x + sin(angle2) * arc_radius
-			local z2 = ship_z + cos(angle2) * arc_radius
+			local x1 = ship_x + dir1.x * arc_radius
+			local z1 = ship_z + dir1.z * arc_radius
+			local x2 = ship_x + dir2.x * arc_radius
+			local z2 = ship_z + dir2.z * arc_radius
 
 			-- Project to screen and draw line
 			draw_line_3d(x1, 0, z1, x2, 0, z2, camera, arc_color)
 		end
 
-		-- Draw target heading line
-		local target_x = ship_x + sin(target_heading) * arc_radius
-		local target_z = ship_z + cos(target_heading) * arc_radius
+		-- Draw target heading line (bright yellow)
+		local target_x = ship_x + target_heading_dir.x * arc_radius
+		local target_z = ship_z + target_heading_dir.z * arc_radius
 		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
 	end
 
@@ -803,8 +1004,8 @@ function _draw()
 	-- Camera angles display
 	print("cam pitch: " .. flr(camera.rx * 100) / 100, 2, 2, 7)
 	print("cam yaw: " .. flr(camera.ry * 100) / 100, 2, 10, 7)
-	print("ship heading: " .. flr(ship_heading * 100) / 100, 2, 18, 7)
-	print("target heading: " .. flr(target_heading * 100) / 100, 2, 26, 7)
+	print("ship dir: (" .. flr(ship_heading_dir.x * 100) / 100 .. "," .. flr(ship_heading_dir.z * 100) / 100 .. ")", 2, 18, 7)
+	print("target dir: (" .. flr(target_heading_dir.x * 100) / 100 .. "," .. flr(target_heading_dir.z * 100) / 100 .. ")", 2, 26, 7)
 
 	-- Raycast debug display
 	if raycast_x and raycast_z then
