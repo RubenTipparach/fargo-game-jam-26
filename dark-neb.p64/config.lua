@@ -31,7 +31,8 @@ Config.stars = {
 -- Camera configuration
 Config.camera = {
 	distance = 30,
-	rx = 0,  -- Initial rotation X
+	height = 20,  -- Camera elevation above ground (y position)
+	rx = 0.25,  -- Initial rotation X (0.25 = looking straight down)
 	ry = 0,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
 }
@@ -43,7 +44,12 @@ Config.ship = {
 	model_file = "shippy1.obj",
 	speed = 0,  -- Current ship speed (0-1)
 	max_speed = 10,  -- Maximum speed value
-	speed_smoothing = 0.1,  -- Speed interpolation smoothing
+	speed_smoothing = 0.01,  -- Speed interpolation smoothing
+	heading = 0,  -- Current heading in radians (0 = +Z axis)
+	target_heading = 0,  -- Target heading to turn towards
+	turn_rate = 0.002,  -- Radians per frame (higher = faster turns)
+	heading_arc_radius = 5,  -- Radius of the heading arc indicator
+	heading_arc_segments = 16,  -- Number of segments for the arc
 }
 
 -- Sphere configuration
@@ -60,7 +66,7 @@ Config.planet = {
 	position = {x = 50, y = 0, z = 0},  -- To the right (closer for visibility)
 	rotation = {pitch = 0, yaw = 0, roll = 0},
 	radius = 20,  -- Smaller radius to fit in view
-	segments = 16,  -- More segments for smoother sphere
+	segments = 8,  -- More segments for smoother sphere
 	stacks = 8,
 	sprite_id = 24,  -- Sprite to use for texture
 	spin_speed = 0.0001,  -- Rotation speed (faster for visibility)

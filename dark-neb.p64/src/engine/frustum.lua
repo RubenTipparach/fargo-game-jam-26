@@ -2,7 +2,6 @@
 -- Implements AABB-based frustum culling for efficient rendering
 
 local Frustum = {}
-local MathUtils = require("engine.math_utils")
 
 -- Plane structure: {normal_x, normal_y, normal_z, distance}
 -- Represents a plane in 3D space using the equation: ax + by + cz + d = 0
@@ -31,18 +30,15 @@ function Frustum.extract_planes(camera, fov, aspect, near, far)
 	local uy = rz * fx - rx * fz
 	local uz = rx * fy - ry * fx
 
-	-- Normalize vectors using fast inverse square root
-	local f_len_sq = fx*fx + fy*fy + fz*fz
-	local inv_f_len = MathUtils.fast_inv_sqrt(f_len_sq)
-	fx, fy, fz = fx*inv_f_len, fy*inv_f_len, fz*inv_f_len
+	-- Normalize vectors
+	local f_len = sqrt(fx*fx + fy*fy + fz*fz)
+	fx, fy, fz = fx/f_len, fy/f_len, fz/f_len
 
-	local r_len_sq = rx*rx + ry*ry + rz*rz
-	local inv_r_len = MathUtils.fast_inv_sqrt(r_len_sq)
-	rx, ry, rz = rx*inv_r_len, ry*inv_r_len, rz*inv_r_len
+	local r_len = sqrt(rx*rx + ry*ry + rz*rz)
+	rx, ry, rz = rx/r_len, ry/r_len, rz/r_len
 
-	local u_len_sq = ux*ux + uy*uy + uz*uz
-	local inv_u_len = MathUtils.fast_inv_sqrt(u_len_sq)
-	ux, uy, uz = ux*inv_u_len, uy*inv_u_len, uz*inv_u_len
+	local u_len = sqrt(ux*ux + uy*uy + uz*uz)
+	ux, uy, uz = ux/u_len, uy/u_len, uz/u_len
 
 	-- Calculate half-angles
 	local fov_rad = fov * 0.5 * 0.0174533
@@ -87,9 +83,8 @@ function Frustum.extract_planes(camera, fov, aspect, near, far)
 	local lny = fy * cos_half_h - ry * sin_half_h
 	local lnz = fz * cos_half_h - rz * sin_half_h
 
-	local ln_len_sq = lnx*lnx + lny*lny + lnz*lnz
-	local inv_ln_len = MathUtils.fast_inv_sqrt(ln_len_sq)
-	lnx, lny, lnz = -lnx*inv_ln_len, -lny*inv_ln_len, -lnz*inv_ln_len
+	local ln_len = sqrt(lnx*lnx + lny*lny + lnz*lnz)
+	lnx, lny, lnz = -lnx/ln_len, -lny/ln_len, -lnz/ln_len
 
 	planes.left = {
 		nx = lnx,
@@ -103,9 +98,8 @@ function Frustum.extract_planes(camera, fov, aspect, near, far)
 	local rny = -fy * cos_half_h + ry * sin_half_h
 	local rnz = -fz * cos_half_h + rz * sin_half_h
 
-	local rn_len_sq = rnx*rnx + rny*rny + rnz*rnz
-	local inv_rn_len = MathUtils.fast_inv_sqrt(rn_len_sq)
-	rnx, rny, rnz = -rnx*inv_rn_len, -rny*inv_rn_len, -rnz*inv_rn_len
+	local rn_len = sqrt(rnx*rnx + rny*rny + rnz*rnz)
+	rnx, rny, rnz = -rnx/rn_len, -rny/rn_len, -rnz/rn_len
 
 	planes.right = {
 		nx = rnx,
@@ -122,9 +116,8 @@ function Frustum.extract_planes(camera, fov, aspect, near, far)
 	local tny = -fy * cos_half_v + uy * sin_half_v
 	local tnz = -fz * cos_half_v + uz * sin_half_v
 
-	local tn_len_sq = tnx*tnx + tny*tny + tnz*tnz
-	local inv_tn_len = MathUtils.fast_inv_sqrt(tn_len_sq)
-	tnx, tny, tnz = -tnx*inv_tn_len, -tny*inv_tn_len, -tnz*inv_tn_len
+	local tn_len = sqrt(tnx*tnx + tny*tny + tnz*tnz)
+	tnx, tny, tnz = -tnx/tn_len, -tny/tn_len, -tnz/tn_len
 
 	planes.top = {
 		nx = tnx,
@@ -138,9 +131,8 @@ function Frustum.extract_planes(camera, fov, aspect, near, far)
 	local bny = fy * cos_half_v - uy * sin_half_v
 	local bnz = fz * cos_half_v - uz * sin_half_v
 
-	local bn_len_sq = bnx*bnx + bny*bny + bnz*bnz
-	local inv_bn_len = MathUtils.fast_inv_sqrt(bn_len_sq)
-	bnx, bny, bnz = -bnx*inv_bn_len, -bny*inv_bn_len, -bnz*inv_bn_len
+	local bn_len = sqrt(bnx*bnx + bny*bny + bnz*bnz)
+	bnx, bny, bnz = -bnx/bn_len, -bny/bn_len, -bnz/bn_len
 
 	planes.bottom = {
 		nx = bnx,
@@ -214,6 +206,9 @@ function Frustum.test_aabb_simple(camera, fov, aspect, near_plane, far_plane, mi
 		local sin_pitch = sin(camera.rx)
 		local vy = cy * cos_pitch - vz * sin_pitch
 		local ez = cy * sin_pitch + vz * cos_pitch
+
+		-- Add camera distance offset (matches renderer transformation)
+		ez = ez + camera.distance
 
 		-- Check if corner is in clip space (w is the depth)
 		local w = ez

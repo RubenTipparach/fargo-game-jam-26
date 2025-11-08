@@ -30,7 +30,7 @@ Config = include("config.lua")
 -- Camera settings (from config)
 local camera = {
 	x = 0,
-	y = 0,
+	y = Config.camera.height or 0,  -- Camera elevation above ground
 	z = 0,
 	rx = Config.camera.rx,
 	ry = Config.camera.ry,
@@ -63,6 +63,14 @@ local light_yaw = Config.lighting.yaw
 local light_pitch = Config.lighting.pitch
 local light_brightness = Config.lighting.brightness
 local ambient = Config.lighting.ambient
+
+-- Ship heading control
+local ship_heading = Config.ship.heading
+local target_heading = Config.ship.target_heading
+
+-- Raycast intersection for visualization
+local raycast_x = nil
+local raycast_z = nil
 
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
@@ -114,6 +122,7 @@ function get_light_direction()
 end
 
 -- Project a 3D point to screen space
+-- Uses simplified transformation (NOT camera-relative) for raycast compatibility
 function project_point(x, y, z, camera)
 	local cam_dist = camera.distance or 5
 	local tan_half_fov = 0.7002075
@@ -140,6 +149,63 @@ function project_point(x, y, z, camera)
 		return px, py, z3
 	end
 	return nil, nil, nil
+end
+
+-- Raycast from screen coordinates to horizontal plane (y=0, normal 0,1,0)
+-- Inverts the simplified project_point transformation
+-- Returns world x,z coordinates where ray intersects the plane, or nil if no intersection
+function raycast_to_ground_plane(screen_x, screen_y, camera)
+	local cam_dist = camera.distance or 5
+	local tan_half_fov = 0.7002075
+	local proj_scale = 270 / tan_half_fov
+
+	-- Camera rotation
+	local sin_ry, cos_ry = sin(camera.ry), cos(camera.ry)
+	local sin_rx, cos_rx = sin(camera.rx), cos(camera.rx)
+
+	-- Unproject screen to view space at arbitrary depth
+	-- From: px = -x1 / z3 * proj_scale + 240
+	--       py = -y2 / z3 * proj_scale + 135
+	local z3 = cam_dist + 10
+	local neg_x1 = (screen_x - 240) / proj_scale * z3
+	local neg_y2 = (screen_y - 135) / proj_scale * z3
+	local x1 = -neg_x1
+	local y2 = -neg_y2
+
+	-- Invert pitch rotation
+	-- Forward was: y2 = y * cos_rx - z1 * sin_rx
+	--              z2 = y * sin_rx + z1 * cos_rx
+	-- Inverse (rotation matrix transpose):
+	local z2 = z3 - cam_dist
+	local y = y2 * cos_rx - z2 * sin_rx
+	local z1 = y2 * sin_rx + z2 * cos_rx
+
+	-- Invert yaw rotation
+	-- x1 = x * cos_ry - z * sin_ry
+	-- z1 = x * sin_ry + z * cos_ry
+	local x = x1 * cos_ry + z1 * sin_ry
+	local z = -x1 * sin_ry + z1 * cos_ry
+
+	-- Ray direction from origin (0,0,0) through (x, y, z)
+	local ray_len = sqrt(x*x + y*y + z*z)
+	if ray_len < 0.0001 then
+		return nil, nil
+	end
+	local ray_x = x / ray_len
+	local ray_y = y / ray_len
+	local ray_z = z / ray_len
+
+	-- Intersect with y=0 plane
+	if abs(ray_y) < 0.0001 then
+		return nil, nil
+	end
+
+	local t = -y / ray_y
+	if t < 0 then
+		return nil, nil
+	end
+
+	return t * ray_x, t * ray_z
 end
 
 -- Build camera transformation matrix (3x4 for matmul3d)
@@ -446,6 +512,40 @@ function _update()
 		slider_dragging = false
 	end
 
+	-- Always update raycast position for crosshair visualization
+	raycast_x, raycast_z = raycast_to_ground_plane(mx, my, camera)
+
+	-- Right-click to set ship heading
+	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
+		-- Log camera state
+		printh("Camera: pos(" .. flr(camera.x*10)/10 .. "," .. flr(camera.y*10)/10 .. "," .. flr(camera.z*10)/10 .. ") rot(" .. flr(camera.rx*100)/100 .. "," .. flr(camera.ry*100)/100 .. ")")
+		printh("Mouse: (" .. mx .. "," .. my .. ")")
+
+		if raycast_x and raycast_z then
+			printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
+
+			-- Verify raycast by projecting back to screen
+			local verify_px, verify_py = project_point(raycast_x, 0, raycast_z, camera)
+			if verify_px then
+				printh("  Verification: projects back to screen (" .. flr(verify_px) .. "," .. flr(verify_py) .. ")")
+				printh("  Error: dx=" .. flr(verify_px - mx) .. " dy=" .. flr(verify_py - my))
+			end
+
+			-- Calculate direction from ship to target point
+			local ship_x = Config.ship.position.x
+			local ship_z = Config.ship.position.z
+			local dx = raycast_x - ship_x
+			local dz = raycast_z - ship_z
+
+			-- Calculate target heading (atan2 gives angle in turns, 0-1 range)
+			-- We want 0 = +Z axis, so we use atan2(dx, dz)
+			-- atan2 in Picotron returns turns (0-1), not radians
+			target_heading = atan2(dx, dz)
+		else
+			printh("Raycast FAILED: returned nil")
+		end
+	end
+
 	-- WASD controls for light rotation
 	local light_rotation_speed = Config.lighting.rotation_speed
 	if keyp("left") or keyp("a") then
@@ -471,6 +571,37 @@ function _update()
 
 	-- Smooth ship speed (lerp towards target)
 	ship_speed = ship_speed + (target_ship_speed - ship_speed) * Config.ship.speed_smoothing
+
+	-- Smooth ship heading rotation towards target
+	-- Calculate shortest rotation direction (handle wrap-around)
+	-- Normalize both angles to [0, 1) first
+	local normalized_target = target_heading % 1.0
+	local normalized_current = ship_heading % 1.0
+
+	-- Calculate difference and wrap to [-0.5, 0.5] for shortest path
+	local heading_diff = normalized_target - normalized_current
+	if heading_diff > 0.5 then
+		heading_diff = heading_diff - 1.0
+	elseif heading_diff < -0.5 then
+		heading_diff = heading_diff + 1.0
+	end
+
+	-- Apply turn rate (limit rotation speed)
+	local turn_amount = mid(-Config.ship.turn_rate, heading_diff, Config.ship.turn_rate)
+	ship_heading = (ship_heading + turn_amount) % 1.0
+
+	-- Move ship in direction of heading based on speed
+	if ship_speed > 0.01 then
+		local move_speed = ship_speed * Config.ship.max_speed * 0.1  -- Scale for reasonable movement
+		Config.ship.position.x = Config.ship.position.x + sin(ship_heading) * move_speed
+		Config.ship.position.z = Config.ship.position.z + cos(ship_heading) * move_speed
+	end
+
+	-- Camera follows ship (focus point tracks ship position)
+	camera.x = Config.ship.position.x
+	camera.z = Config.ship.position.z
+	-- Keep camera height from config
+	camera.y = Config.camera.height or 0
 
 	-- Update planet rotation
 	planet_rotation = planet_rotation + Config.planet.spin_speed
@@ -530,7 +661,7 @@ function _draw()
 			light_brightness,  -- light brightness
 			ambient,  -- ambient light
 			false,  -- is_ground
-			ship_rot.pitch, ship_rot.yaw, ship_rot.roll,
+			ship_rot.pitch, ship_heading, ship_rot.roll,  -- Use ship_heading for yaw
 			Config.rendering.render_distance
 		)
 
@@ -546,13 +677,76 @@ function _draw()
 	-- Draw faces using lit rendering with color tables
 	RendererLit.draw_faces(all_faces)
 
+	-- Draw raycast crosshair (shows where mouse points on ground plane)
+	if raycast_x and raycast_z then
+		local cross_size = 0.5  -- Size of crosshair arms
+		-- Draw crosshair on the ground plane (y=0)
+		draw_line_3d(raycast_x - cross_size, 0, raycast_z, raycast_x + cross_size, 0, raycast_z, camera, 12)  -- Horizontal line (red)
+		draw_line_3d(raycast_x, 0, raycast_z - cross_size, raycast_x, 0, raycast_z + cross_size, camera, 12)  -- Vertical line (red)
+	end
+
+	-- Draw heading arc (shows ship's turn path)
+	-- Use same shortest-path calculation as movement
+	local normalized_target = target_heading % 1.0
+	local normalized_current = ship_heading % 1.0
+	local heading_diff = normalized_target - normalized_current
+	if heading_diff > 0.5 then
+		heading_diff = heading_diff - 1.0
+	elseif heading_diff < -0.5 then
+		heading_diff = heading_diff + 1.0
+	end
+
+	-- Only draw arc if there's a significant heading difference (0.01 turns ≈ 3.6 degrees)
+	if abs(heading_diff) > 0.01 then
+		local ship_x = Config.ship.position.x
+		local ship_z = Config.ship.position.z
+		local arc_radius = Config.ship.heading_arc_radius
+		local segments = Config.ship.heading_arc_segments
+
+		-- Draw arc from current heading to target heading
+		local start_angle = ship_heading
+		local arc_color = 10  -- Yellow
+
+		for i = 0, segments - 1 do
+			local t1 = i / segments
+			local t2 = (i + 1) / segments
+
+			-- Interpolate angle
+			local angle1 = start_angle + heading_diff * t1
+			local angle2 = start_angle + heading_diff * t2
+
+			-- Calculate 3D positions on the arc
+			local x1 = ship_x + sin(angle1) * arc_radius
+			local z1 = ship_z + cos(angle1) * arc_radius
+			local x2 = ship_x + sin(angle2) * arc_radius
+			local z2 = ship_z + cos(angle2) * arc_radius
+
+			-- Project to screen and draw line
+			draw_line_3d(x1, 0, z1, x2, 0, z2, camera, arc_color)
+		end
+
+		-- Draw target heading line
+		local target_x = ship_x + sin(target_heading) * arc_radius
+		local target_z = ship_z + cos(target_heading) * arc_radius
+		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
+	end
+
 	-- Draw speed slider
-	-- Slider track
+	-- Slider track (background)
 	rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 1)
+
+	-- Current speed fill (shows actual ship speed - acceleration progress)
+	local speed_fill_height = ship_speed * slider_height
+	local speed_fill_y = slider_y + slider_height - speed_fill_height
+	if speed_fill_height > 0 then
+		rectfill(slider_x, speed_fill_y, slider_x + slider_width, slider_y + slider_height, 11)  -- Bright cyan fill
+	end
+
+	-- Slider border
 	rect(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 7)
 
-	-- Slider handle (position based on current speed)
-	local handle_y = slider_y + (1 - ship_speed) * slider_height - slider_handle_height / 2
+	-- Slider handle (position based on target speed)
+	local handle_y = slider_y + (1 - target_ship_speed) * slider_height - slider_handle_height / 2
 	handle_y = mid(slider_y, handle_y, slider_y + slider_height - slider_handle_height)
 	rectfill(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 7)
 	rect(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 6)
@@ -565,6 +759,20 @@ function _draw()
 	if Config.show_cpu then
 		local cpu = stat(1) * 100
 		print("cpu: " .. flr(cpu) .. "%", 380, 2, cpu > 80 and 8 or 7)
+	end
+
+	-- Camera angles display
+	print("cam pitch: " .. flr(camera.rx * 100) / 100, 2, 2, 7)
+	print("cam yaw: " .. flr(camera.ry * 100) / 100, 2, 10, 7)
+	print("ship heading: " .. flr(ship_heading * 100) / 100, 2, 18, 7)
+	print("target heading: " .. flr(target_heading * 100) / 100, 2, 26, 7)
+
+	-- Raycast debug display
+	if raycast_x and raycast_z then
+		print("raycast x: " .. flr(raycast_x * 10) / 10, 2, 34, 7)
+		print("raycast z: " .. flr(raycast_z * 10) / 10, 2, 42, 7)
+	else
+		print("raycast: nil", 2, 34, 8)
 	end
 
 	-- Lighting debug (only visible when Config.debug_lighting is true)

@@ -10,6 +10,7 @@ RendererLit.profiler = nil
 -- Load lighting module
 local Lighting = require("src.lighting")
 local MathUtils = require("src.engine.math_utils")
+local Frustum = require("src.engine.frustum")
 
 -- ============================================
 -- COLOR TABLE SPRITE CACHING
@@ -529,6 +530,51 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 		return {}
 	end
 
+	-- Frustum culling: calculate AABB for the mesh in world space
+	if not is_ground and not is_skybox and #verts > 0 then
+		-- Calculate mesh bounding box in local space
+		local min_x, min_y, min_z = verts[1].x, verts[1].y, verts[1].z
+		local max_x, max_y, max_z = min_x, min_y, min_z
+
+		for i = 2, #verts do
+			local v = verts[i]
+			if v.x < min_x then min_x = v.x end
+			if v.x > max_x then max_x = v.x end
+			if v.y < min_y then min_y = v.y end
+			if v.y > max_y then max_y = v.y end
+			if v.z < min_z then min_z = v.z end
+			if v.z > max_z then max_z = v.z end
+		end
+
+		-- Transform AABB to world space (apply offset and object rotation)
+		-- For simplicity, we'll use a conservative AABB that contains the rotated box
+		local aabb_center_x = (min_x + max_x) / 2 + obj_x
+		local aabb_center_y = (min_y + max_y) / 2 + (offset_y or 0)
+		local aabb_center_z = (min_z + max_z) / 2 + obj_z
+		local aabb_extents_x = (max_x - min_x) / 2
+		local aabb_extents_y = (max_y - min_y) / 2
+		local aabb_extents_z = (max_z - min_z) / 2
+
+		-- Add extra margin for object rotation (conservative)
+		if rot_pitch or rot_yaw or rot_roll then
+			local max_extent = max(aabb_extents_x, max(aabb_extents_y, aabb_extents_z))
+			aabb_extents_x = max_extent
+			aabb_extents_y = max_extent
+			aabb_extents_z = max_extent
+		end
+
+		-- Test if AABB is in frustum
+		local fov = 70  -- degrees (matches tan_half_fov)
+		local aspect = 480 / 270  -- screen width / height
+		if not Frustum.test_aabb_simple(camera, fov, aspect, near, far,
+			aabb_center_x - aabb_extents_x, aabb_center_y - aabb_extents_y, aabb_center_z - aabb_extents_z,
+			aabb_center_x + aabb_extents_x, aabb_center_y + aabb_extents_y, aabb_center_z + aabb_extents_z) then
+			-- Object is completely outside frustum
+			if prof then prof("    setup") end
+			return {}
+		end
+	end
+
 	-- Allocate arrays for vertex processing
 	local projected = {}
 	local depths = {}
@@ -617,52 +663,108 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 		end
 	end
 
-	for i = 1, #verts do
-		local v = verts[i]
-		local x, y, z = v.x, v.y, v.z
+	-- Batch vertex transformation using matmul3d (much faster than loop)
+	local num_verts = #verts
+	if num_verts > 0 then
+		-- Create userdata for batch transformation (reuse if possible)
+		-- Format: 3 columns (x,y,z) × num_verts rows
+		local vert_data = userdata("f64", 3, num_verts)
 
-		-- Apply object rotation (pitch, yaw, roll) if provided
-		if rot_pitch or rot_yaw or rot_roll then
-			-- Yaw (Y axis)
-			local x_yaw = x * cos_yaw - z * sin_yaw
-			local z_yaw = x * sin_yaw + z * cos_yaw
-
-			-- Pitch (X axis)
-			local y_pitch = y * cos_pitch - z_yaw * sin_pitch
-			local z_pitch = y * sin_pitch + z_yaw * cos_pitch
-
-			-- Roll (Z axis)
-			local x_roll = x_yaw * cos_roll - y_pitch * sin_roll
-			local y_roll = x_yaw * sin_roll + y_pitch * cos_roll
-
-			x, y, z = x_roll, y_roll, z_pitch
+		-- Copy vertex positions to userdata
+		for i = 1, num_verts do
+			local v = verts[i]
+			vert_data:set(0, i-1, v.x)  -- 0-indexed
+			vert_data:set(1, i-1, v.y)
+			vert_data:set(2, i-1, v.z)
 		end
 
-		-- Apply offset and camera transform in one step
-		x = x + offset_x_val - cam_x
-		y = y + offset_y_val - cam_y
-		z = z + offset_z_val - cam_z
+		-- Apply object rotation if needed (using matrix multiplication)
+		if rot_pitch or rot_yaw or rot_roll then
+			-- Apply rotations sequentially (could optimize to combined matrix)
 
-		-- Rotate around Y axis (using cached values)
-		local x2 = x * cos_ry - z * sin_ry
-		local z2 = x * sin_ry + z * cos_ry
+			if rot_yaw then
+				-- Yaw rotation matrix (Y-axis)
+				local mat_yaw = userdata("f64", 3, 4)
+				mat_yaw:set(0, 0, cos_yaw)   mat_yaw:set(0, 1, 0)         mat_yaw:set(0, 2, -sin_yaw)  mat_yaw:set(0, 3, 0)
+				mat_yaw:set(1, 0, 0)         mat_yaw:set(1, 1, 1)         mat_yaw:set(1, 2, 0)         mat_yaw:set(1, 3, 0)
+				mat_yaw:set(2, 0, sin_yaw)   mat_yaw:set(2, 1, 0)         mat_yaw:set(2, 2, cos_yaw)   mat_yaw:set(2, 3, 0)
+				vert_data:matmul3d(mat_yaw, vert_data, 1)
+			end
 
-		-- Rotate around X axis (using cached values)
-		local y2 = y * cos_rx - z2 * sin_rx
-		local z3 = y * sin_rx + z2 * cos_rx + cam_dist
+			if rot_pitch then
+				-- Pitch rotation matrix (X-axis)
+				local mat_pitch = userdata("f64", 3, 4)
+				mat_pitch:set(0, 0, 1)         mat_pitch:set(0, 1, 0)           mat_pitch:set(0, 2, 0)           mat_pitch:set(0, 3, 0)
+				mat_pitch:set(1, 0, 0)         mat_pitch:set(1, 1, cos_pitch)   mat_pitch:set(1, 2, -sin_pitch)  mat_pitch:set(1, 3, 0)
+				mat_pitch:set(2, 0, 0)         mat_pitch:set(2, 1, sin_pitch)   mat_pitch:set(2, 2, cos_pitch)   mat_pitch:set(2, 3, 0)
+				vert_data:matmul3d(mat_pitch, vert_data, 1)
+			end
 
-		-- Perspective projection (allow vertices closer to camera)
-		if z3 > near then
-			local inv_z = 1 / z3
-			local px = -x2 * inv_z * proj_scale + 240
-			local py = -y2 * inv_z * proj_scale + 135
+			if rot_roll then
+				-- Roll rotation matrix (Z-axis)
+				local mat_roll = userdata("f64", 3, 4)
+				mat_roll:set(0, 0, cos_roll)   mat_roll:set(0, 1, -sin_roll)  mat_roll:set(0, 2, 0)  mat_roll:set(0, 3, 0)
+				mat_roll:set(1, 0, sin_roll)   mat_roll:set(1, 1, cos_roll)   mat_roll:set(1, 2, 0)  mat_roll:set(1, 3, 0)
+				mat_roll:set(2, 0, 0)          mat_roll:set(2, 1, 0)          mat_roll:set(2, 2, 1)  mat_roll:set(2, 3, 0)
+				vert_data:matmul3d(mat_roll, vert_data, 1)
+			end
+		end
 
-			-- Store projected vertex and depth (brightness is per-face, not per-vertex)
-			projected[i] = {x=px, y=py, z=0, w=inv_z}
-			depths[i] = z3
-		else
-			projected[i] = nil
-			depths[i] = nil
+		-- First, apply offset (translate vertices relative to camera position)
+		for i = 1, num_verts do
+			vert_data:set(0, i-1, vert_data:get(0, i-1) + offset_x_val - cam_x)
+			vert_data:set(1, i-1, vert_data:get(1, i-1) + offset_y_val - cam_y)
+			vert_data:set(2, i-1, vert_data:get(2, i-1) + offset_z_val - cam_z)
+		end
+
+		-- Build camera rotation matrix matching original transformation:
+		-- x1 = x * cos_ry - z * sin_ry
+		-- z1 = x * sin_ry + z * cos_ry
+		-- y2 = y * cos_rx - z1 * sin_rx
+		-- z3 = y * sin_rx + z1 * cos_rx + cam_dist
+		local cam_mat = userdata("f64", 3, 4)
+
+		-- Column 0: x2 = x1 = x * cos_ry - z * sin_ry
+		cam_mat:set(0, 0, cos_ry)
+		cam_mat:set(0, 1, 0)
+		cam_mat:set(0, 2, -sin_ry)
+		cam_mat:set(0, 3, 0)
+
+		-- Column 1: y2 = y * cos_rx - z1 * sin_rx
+		--          = y * cos_rx - (x * sin_ry + z * cos_ry) * sin_rx
+		cam_mat:set(1, 0, -sin_ry * sin_rx)
+		cam_mat:set(1, 1, cos_rx)
+		cam_mat:set(1, 2, -cos_ry * sin_rx)
+		cam_mat:set(1, 3, 0)
+
+		-- Column 2: z3 = y * sin_rx + z1 * cos_rx + cam_dist
+		--          = y * sin_rx + (x * sin_ry + z * cos_ry) * cos_rx + cam_dist
+		cam_mat:set(2, 0, sin_ry * cos_rx)
+		cam_mat:set(2, 1, sin_rx)
+		cam_mat:set(2, 2, cos_ry * cos_rx)
+		cam_mat:set(2, 3, cam_dist)
+
+		-- Apply camera transformation
+		vert_data:matmul3d(cam_mat, vert_data, 1)
+
+		-- Project vertices and populate projected/depths arrays
+		for i = 1, num_verts do
+			local x2 = vert_data:get(0, i-1)
+			local y2 = vert_data:get(1, i-1)
+			local z3 = vert_data:get(2, i-1)
+
+			-- Perspective projection
+			if z3 > near then
+				local inv_z = 1 / z3
+				local px = -x2 * inv_z * proj_scale + 240
+				local py = -y2 * inv_z * proj_scale + 135
+
+				projected[i] = {x=px, y=py, z=0, w=inv_z}
+				depths[i] = z3
+			else
+				projected[i] = nil
+				depths[i] = nil
+			end
 		end
 	end
 	if prof then prof("    project") end
