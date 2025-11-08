@@ -186,26 +186,38 @@ function raycast_to_ground_plane(screen_x, screen_y, camera)
 	local x = x1 * cos_ry + z1 * sin_ry
 	local z = -x1 * sin_ry + z1 * cos_ry
 
-	-- Ray direction from origin (0,0,0) through (x, y, z)
-	local ray_len = sqrt(x*x + y*y + z*z)
+	-- x, y, z is a point in world space that the ray passes through
+	-- Ray direction is from camera position to (x, y, z)
+	local ray_x = x - camera.x
+	local ray_y = y - camera.y
+	local ray_z = z - camera.z
+
+	-- Normalize ray direction
+	local ray_len = sqrt(ray_x*ray_x + ray_y*ray_y + ray_z*ray_z)
 	if ray_len < 0.0001 then
 		return nil, nil
 	end
-	local ray_x = x / ray_len
-	local ray_y = y / ray_len
-	local ray_z = z / ray_len
+	ray_x = ray_x / ray_len
+	ray_y = ray_y / ray_len
+	ray_z = ray_z / ray_len
 
 	-- Intersect with y=0 plane
+	-- Ray: P = camera.pos + t * ray_dir
+	-- Plane: y = 0
+	-- camera.y + t * ray_y = 0
 	if abs(ray_y) < 0.0001 then
 		return nil, nil
 	end
 
-	local t = -y / ray_y
+	local t = -camera.y / ray_y
+
 	if t < 0 then
 		return nil, nil
 	end
 
-	return t * ray_x, t * ray_z
+	local hit_x = camera.x + t * ray_x
+	local hit_z = camera.z + t * ray_z
+	return hit_x, hit_z
 end
 
 -- Build camera transformation matrix (3x4 for matmul3d)
