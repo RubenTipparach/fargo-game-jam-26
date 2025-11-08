@@ -1021,10 +1021,17 @@ function _draw()
 
 	-- Draw raycast crosshair (shows where mouse points on ground plane)
 	if raycast_x and raycast_z then
-		local cross_size = 0.5  -- Size of crosshair arms
-		-- Draw crosshair on the ground plane (y=0)
-		draw_line_3d(raycast_x - cross_size, 0, raycast_z, raycast_x + cross_size, 0, raycast_z, camera, 8)  -- Horizontal line (red)
-		draw_line_3d(raycast_x, 0, raycast_z - cross_size, raycast_x, 0, raycast_z + cross_size, camera, 8)  -- Vertical line (red)
+		-- Only show crosshair if it's within configured distance from ship on the XZ plane
+		local dx = raycast_x - Config.ship.position.x
+		local dz = raycast_z - Config.ship.position.z
+		local dist_on_plane = sqrt(dx * dx + dz * dz)
+
+		if dist_on_plane < Config.crosshair.max_distance then
+			local cross_size = 0.5  -- Size of crosshair arms
+			-- Draw crosshair on the ground plane (y=0)
+			draw_line_3d(raycast_x - cross_size, 0, raycast_z, raycast_x + cross_size, 0, raycast_z, camera, 8)  -- Horizontal line (red)
+			draw_line_3d(raycast_x, 0, raycast_z - cross_size, raycast_x, 0, raycast_z + cross_size, camera, 8)  -- Vertical line (red)
+		end
 	end
 
 	-- Draw heading compass (arc, heading lines) only when not at target
@@ -1253,7 +1260,7 @@ function _draw()
 
 		local color = palette[palette_index]
 
-		-- Draw the velocity line
+		-- Draw the velocity line (draws on top of model since it's after model rendering)
 		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end

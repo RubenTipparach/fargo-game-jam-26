@@ -5,7 +5,7 @@ local Config = {}
 
 -- Debug flags
 Config.debug = false  -- General debug info (lights, sprites, etc)
-Config.debug_lighting = true  -- Show only lighting arrow and rotation values
+Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
 
 -- Star configuration
@@ -35,6 +35,7 @@ Config.camera = {
 	rx = 0.05,  -- Initial rotation X (0.25 = looking straight down)
 	ry = -0.36,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
+	-- TODO ADD RENDER DISTANCE HERE
 }
 
 -- Ship/Model configuration
@@ -106,6 +107,11 @@ Config.particles = {
 	-- Color palette based on distance from ship (closest to farthest)
 	color_palette = {28, 12, 7, 6, 13, 1},  -- 6 colors from closest to farthest
 	max_dist = 30,  -- Maximum distance for color distribution
+}
+
+-- Crosshair configuration
+Config.crosshair = {
+	max_distance = 4,  -- Only show crosshair if within this distance from ship on XZ plane
 }
 
 return Config
