@@ -151,18 +151,22 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 		return sprite_id
 	end
 
-	-- Create new sprite userdata (16x16) - initialize all pixels to 0 (transparent)
-	local new_sprite = userdata("u8", 16, 16)
+	-- Get sprite dimensions (supports 16x16, 64x32, etc.)
+	local sprite_w = original_sprite:width()
+	local sprite_h = original_sprite:height()
+
+	-- Create new sprite userdata with correct dimensions
+	local new_sprite = userdata("u8", sprite_w, sprite_h)
 	-- Initialize to transparent
-	for y = 0, 15 do
-		for x = 0, 15 do
+	for y = 0, sprite_h - 1 do
+		for x = 0, sprite_w - 1 do
 			new_sprite:set(x, y, 0)
 		end
 	end
 
 	-- All 8 levels use a single row from the color table
-	for y = 0, 15 do
-		for x = 0, 15 do
+	for y = 0, sprite_h - 1 do
+		for x = 0, sprite_w - 1 do
 			local c = original_sprite:get(x, y)
 			-- Extract color index from low 6 bits (0x3f mask)
 			-- High 2 bits are color table selection metadata

@@ -37,10 +37,26 @@ local camera = {
 	distance = Config.camera.distance,
 }
 
+-- Target camera rotation (for smoothing)
+local target_rx = Config.camera.rx
+local target_ry = Config.camera.ry
+
 -- Mouse orbit state
 local mouse_drag = false
 local last_mouse_x = 0
 local last_mouse_y = 0
+
+-- Ship speed control
+local ship_speed = Config.ship.speed
+local target_ship_speed = Config.ship.speed
+
+-- Speed slider state
+local slider_dragging = false
+local slider_x = 450  -- Right side of screen
+local slider_y = 50   -- Top position
+local slider_height = 150
+local slider_width = 10
+local slider_handle_height = 20
 
 -- Light settings (from config)
 local light_yaw = Config.lighting.yaw
@@ -155,20 +171,67 @@ function build_camera_matrix(cam)
 	return mat
 end
 
--- Draw stars in background (fixed in world space)
+-- Transformed star positions (created once, reused each frame)
+local star_transformed = nil
+
+-- Draw stars in background using batch matrix multiplication
 function draw_stars()
 	if not star_positions then return end
 
-	-- Draw each star using project_point (simpler, rotates with camera)
-	for i = 0, Config.stars.count - 1 do
-		local x = star_positions:get(0, i)
-		local y = star_positions:get(1, i)
-		local z = star_positions:get(2, i)
-		local color = star_positions:get(3, i)
+	-- Create transformed positions userdata if needed (reuse each frame)
+	if not star_transformed then
+		star_transformed = userdata("f64", 4, Config.stars.count)
+	end
 
-		-- Project star to screen space
-		local px, py, pz = project_point(x, y, z, camera)
-		if px and py and pz > 0 then
+	-- Build camera transformation matrix for batch processing
+	-- Negate camera rotation to make stars rotate opposite to camera (fixed background)
+	local sin_ry, cos_ry = sin(-camera.ry), cos(-camera.ry)
+	local sin_rx, cos_rx = sin(-camera.rx), cos(-camera.rx)
+	local cam_dist = camera.distance or 30
+
+	-- Create 3x4 transformation matrix for matmul3d (3 columns, 4 rows)
+	-- This matches the transformation in project_point()
+	local mat = userdata("f64", 3, 4)
+
+	-- Column 0 (x output = -x1 = -(x*cos_ry - z*sin_ry))
+	mat:set(0, 0, -cos_ry)
+	mat:set(0, 1, 0)
+	mat:set(0, 2, sin_ry)
+	mat:set(0, 3, 0)
+
+	-- Column 1 (y output = -y2 = -(y*cos_rx - z1*sin_rx))
+	mat:set(1, 0, sin_ry * sin_rx)
+	mat:set(1, 1, -cos_rx)
+	mat:set(1, 2, cos_ry * sin_rx)
+	mat:set(1, 3, 0)
+
+	-- Column 2 (z output = z1*cos_rx + y*sin_rx + cam_dist)
+	mat:set(2, 0, sin_ry * cos_rx)
+	mat:set(2, 1, sin_rx)
+	mat:set(2, 2, cos_ry * cos_rx)
+	mat:set(2, 3, cam_dist)
+
+	-- Batch transform all stars at once
+	-- star_positions is 4 columns × N rows (x,y,z,color per column)
+	-- Copy original data, then transform in place
+	star_transformed:copy(star_positions, true)
+	star_transformed:matmul3d(mat, star_transformed, 1)
+
+	-- Project and draw stars
+	local tan_half_fov = 0.7002075
+	local proj_scale = 270 / tan_half_fov
+
+	for i = 0, Config.stars.count - 1 do
+		local x = star_transformed:get(0, i)
+		local y = star_transformed:get(1, i)
+		local z = star_transformed:get(2, i)
+		local color = star_positions:get(3, i)  -- Color unchanged from original
+
+		-- Project to screen (perspective divide)
+		if z > 0.01 then
+			local inv_z = 1 / z
+			local px = -x * inv_z * proj_scale + 240
+			local py = -y * inv_z * proj_scale + 135
 			pset(px, py, color)
 		end
 	end
@@ -192,55 +255,114 @@ local planet_rotation = 0
 
 
 
--- Create a low-poly sphere mesh (from lounge.p64)
+-- Create a UV-mapped sphere (from ld58.p64)
+-- Uses proper UV wrapping for 64x32 texture sprites
 function create_sphere(radius, segments, stacks, sprite_id, sprite_w, sprite_h)
 	local verts = {}
 	local faces = {}
 
-	stacks = stacks or segments  -- Default stacks to segments if not provided
+	-- Use ld58 parameters if not provided
+	local rings = stacks or 6  -- 6 height segments (latitude)
+	segments = segments or 8  -- 8 sides (longitude)
 	sprite_id = sprite_id or 1
-	sprite_w = sprite_w or 16
-	sprite_h = sprite_h or 16
+	sprite_w = sprite_w or 64
+	sprite_h = sprite_h or 32
 
-	-- Generate vertices
-	for stack = 0, stacks do
-		local phi = (stack / stacks) * 0.5  -- 0 to 0.5 (0 to 180 degrees in Picotron)
-		local y = radius * cos(phi)
-		local ring_radius = radius * sin(phi)
+	-- Generate vertices in rings from top to bottom
+	-- Top vertex (north pole)
+	add(verts, vec(0, radius, 0))
 
-		for seg = 0, segments do
-			local theta = seg / segments  -- 0 to 1 (full circle in Picotron)
-			local x = ring_radius * cos(theta)
-			local z = ring_radius * sin(theta)
+	-- Middle rings (latitude)
+	for ring = 1, rings - 1 do
+		local v = ring / rings  -- Vertical position (0 to 1)
+		local angle_v = v * 0.5  -- Angle from top (0 to 0.5 turns)
+		local y = cos(angle_v) * radius
+		local ring_radius = sin(angle_v) * radius
+
+		-- Vertices around the ring (longitude)
+		for seg = 0, segments - 1 do
+			local angle_h = seg / segments  -- Horizontal angle (0 to 1 turn)
+			local x = cos(angle_h) * ring_radius
+			local z = sin(angle_h) * ring_radius
 			add(verts, vec(x, y, z))
 		end
 	end
 
-	-- Generate faces (triangles with correct winding) with UV mapping
-	for stack = 0, stacks - 1 do
+	-- Bottom vertex (south pole)
+	add(verts, vec(0, -radius, 0))
+
+	-- UV scale for sprite
+	local uv_scale_u = sprite_w
+	local uv_scale_v = sprite_h
+	local uv_offset = -uv_scale_v  -- Slide UVs down by half
+
+	-- Generate faces
+	-- Top cap (connect first ring to top vertex)
+	for seg = 0, segments - 1 do
+		local next_seg = (seg + 1) % segments
+		local v1 = 1  -- Top vertex
+		local v2 = 2 + seg
+		local v3 = 2 + next_seg
+
+		-- UV coordinates (shifted down by half, inverted Y axis)
+		local u1 = (seg + 0.5) / segments * uv_scale_u
+		local u2 = seg / segments * uv_scale_u
+		local u3 = (seg + 1) / segments * uv_scale_u
+		local v_top = uv_scale_v - (0 + uv_offset)
+		local v_ring1 = uv_scale_v - ((1 / rings) * uv_scale_v + uv_offset)
+
+		-- Reverse winding order: v1, v3, v2 instead of v1, v2, v3
+		add(faces, {v1, v3, v2, sprite_id,
+			vec(u1, v_top), vec(u3, v_ring1), vec(u2, v_ring1)})
+	end
+
+	-- Middle rings
+	for ring = 0, rings - 3 do
+		local ring_start = 2 + ring * segments
+		local next_ring_start = 2 + (ring + 1) * segments
+
 		for seg = 0, segments - 1 do
-			local current = stack * (segments + 1) + seg + 1
-			local next_stack = current + segments + 1
+			local next_seg = (seg + 1) % segments
 
-			-- Calculate UV coordinates for spherical mapping
-			local u0 = (seg / segments) * sprite_w
-			local u1 = ((seg + 1) / segments) * sprite_w
-			local v0 = (stack / stacks) * sprite_h
-			local v1 = ((stack + 1) / stacks) * sprite_h
+			-- Two triangles per quad
+			local v1 = ring_start + seg
+			local v2 = ring_start + next_seg
+			local v3 = next_ring_start + next_seg
+			local v4 = next_ring_start + seg
 
-			-- Two triangles per quad (flipped winding for outward-facing normals)
-			add(faces, {
-				current, current + 1, next_stack,
-				sprite_id,
-				vec(u0, v0), vec(u1, v0), vec(u0, v1)
-			})
+			-- UV coordinates (shifted down by half, inverted Y axis)
+			local u1 = seg / segments * uv_scale_u
+			local u2 = (seg + 1) / segments * uv_scale_u
+			local v1_uv = uv_scale_v - ((ring + 1) / rings * uv_scale_v + uv_offset)
+			local v2_uv = uv_scale_v - ((ring + 2) / rings * uv_scale_v + uv_offset)
 
-			add(faces, {
-				next_stack, current + 1, next_stack + 1,
-				sprite_id,
-				vec(u0, v1), vec(u1, v0), vec(u1, v1)
-			})
+			-- First triangle
+			add(faces, {v1, v2, v3, sprite_id,
+				vec(u1, v1_uv), vec(u2, v1_uv), vec(u2, v2_uv)})
+			-- Second triangle
+			add(faces, {v1, v3, v4, sprite_id,
+				vec(u1, v1_uv), vec(u2, v2_uv), vec(u1, v2_uv)})
 		end
+	end
+
+	-- Bottom cap (connect last ring to bottom vertex)
+	local last_ring_start = 2 + (rings - 2) * segments
+	local bottom_vertex = #verts
+	for seg = 0, segments - 1 do
+		local next_seg = (seg + 1) % segments
+		local v1 = last_ring_start + seg
+		local v2 = last_ring_start + next_seg
+		local v3 = bottom_vertex
+
+		-- UV coordinates (shifted down by half, inverted Y axis)
+		local u1 = seg / segments * uv_scale_u
+		local u2 = (seg + 1) / segments * uv_scale_u
+		local u_center = (seg + 0.5) / segments * uv_scale_u
+
+		add(faces, {v1, v2, v3, sprite_id,
+			vec(u1, uv_scale_v - (uv_scale_v * (rings - 1) / rings + uv_offset)),
+			vec(u2, uv_scale_v - (uv_scale_v * (rings - 1) / rings + uv_offset)),
+			vec(u_center, uv_scale_v - (uv_scale_v + uv_offset))})
 	end
 
 	return {verts = verts, faces = faces, name = "sphere"}
@@ -285,29 +407,43 @@ function _update()
 	-- Mouse orbit controls
 	local mx, my, mb = mouse()
 
+	-- Check if mouse is over slider
+	local over_slider = mx >= slider_x - 5 and mx <= slider_x + slider_width + 5 and
+	                    my >= slider_y and my <= slider_y + slider_height
+
 	if mb & 1 == 1 then  -- Left mouse button
-		if not mouse_drag then
-			-- Start dragging
-			mouse_drag = true
-			last_mouse_x = mx
-			last_mouse_y = my
-		else
-			-- Continue dragging
-			local dx = mx - last_mouse_x
-			local dy = my - last_mouse_y
+		if over_slider then
+			-- Drag slider
+			slider_dragging = true
+			-- Calculate target speed from mouse Y position
+			local slider_pos = mid(0, (my - slider_y) / slider_height, 1)
+			target_ship_speed = (1 - slider_pos)  -- Inverted (top = max speed)
+		elseif not slider_dragging then
+			-- Camera orbit
+			if not mouse_drag then
+				-- Start dragging
+				mouse_drag = true
+				last_mouse_x = mx
+				last_mouse_y = my
+			else
+				-- Continue dragging
+				local dx = mx - last_mouse_x
+				local dy = my - last_mouse_y
 
-			-- Update camera rotation (Y axis up)
-			camera.ry = camera.ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
-			camera.rx = camera.rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
+				-- Update target camera rotation (Y axis up)
+				target_ry = target_ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
+				target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
 
-			-- Clamp pitch to avoid gimbal lock
-			camera.rx = mid(-1.5, camera.rx, 1.5)
+				-- Clamp target pitch to avoid gimbal lock
+				target_rx = mid(-1.5, target_rx, 1.5)
 
-			last_mouse_x = mx
-			last_mouse_y = my
+				last_mouse_x = mx
+				last_mouse_y = my
+			end
 		end
 	else
 		mouse_drag = false
+		slider_dragging = false
 	end
 
 	-- WASD controls for light rotation
@@ -327,6 +463,14 @@ function _update()
 
 	-- Clamp light pitch to reasonable range
 	light_pitch = mid(-1.5, light_pitch, 1.5)
+
+	-- Smooth camera rotation (lerp towards target)
+	local smoothing = 0.2  -- Lower = smoother (0.1-0.3 range)
+	camera.rx = camera.rx + (target_rx - camera.rx) * smoothing
+	camera.ry = camera.ry + (target_ry - camera.ry) * smoothing
+
+	-- Smooth ship speed (lerp towards target)
+	ship_speed = ship_speed + (target_ship_speed - ship_speed) * Config.ship.speed_smoothing
 
 	-- Update planet rotation
 	planet_rotation = planet_rotation + Config.planet.spin_speed
@@ -402,22 +546,32 @@ function _draw()
 	-- Draw faces using lit rendering with color tables
 	RendererLit.draw_faces(all_faces)
 
+	-- Draw speed slider
+	-- Slider track
+	rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 1)
+	rect(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 7)
+
+	-- Slider handle (position based on current speed)
+	local handle_y = slider_y + (1 - ship_speed) * slider_height - slider_handle_height / 2
+	handle_y = mid(slider_y, handle_y, slider_y + slider_height - slider_handle_height)
+	rectfill(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 7)
+	rect(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 6)
+
+	-- Speed value text
+	local speed_display = flr(ship_speed * Config.ship.max_speed * 10) / 10
+	print("speed: " .. speed_display, slider_x - 30, slider_y + slider_height + 10, 7)
+
 	-- CPU usage (always visible if Config.show_cpu is true)
 	if Config.show_cpu then
 		local cpu = stat(1) * 100
 		print("cpu: " .. flr(cpu) .. "%", 380, 2, cpu > 80 and 8 or 7)
 	end
 
-	-- Debug UI (only visible when Config.debug is true)
-	if Config.debug then
-		-- Control hints
-		print("mouse: orbit camera", 2, 2, 7)
-		print("wasd: rotate light", 2, 10, 7)
-		print("faces: " .. #all_faces, 2, 18, 7)
-
+	-- Lighting debug (only visible when Config.debug_lighting is true)
+	if Config.debug_lighting then
 		-- Light rotation info
-		print("light yaw: " .. flr(light_yaw * 100) / 100, 2, 26, 7)
-		print("light pitch: " .. flr(light_pitch * 100) / 100, 2, 34, 7)
+		print("light yaw: " .. flr(light_yaw * 100) / 100, 2, 2, 7)
+		print("light pitch: " .. flr(light_pitch * 100) / 100, 2, 10, 7)
 
 		-- Draw 3D light direction arrow in world space
 		local light_dir = get_light_direction()
@@ -478,6 +632,14 @@ function _draw()
 		draw_line_3d(arrow_end_x, arrow_end_y, arrow_end_z, tip2_x, tip2_y, tip2_z, camera, 10)
 		draw_line_3d(arrow_end_x, arrow_end_y, arrow_end_z, tip3_x, tip3_y, tip3_z, camera, 10)
 		draw_line_3d(arrow_end_x, arrow_end_y, arrow_end_z, tip4_x, tip4_y, tip4_z, camera, 10)
+	end
+
+	-- Full debug UI (only visible when Config.debug is true)
+	if Config.debug then
+		-- Control hints
+		print("mouse: orbit camera", 2, 18, 7)
+		print("wasd: rotate light", 2, 26, 7)
+		print("faces: " .. #all_faces, 2, 34, 7)
 
 		-- Show sprite system (texture + brightness masks)
 		local debug_x = 320

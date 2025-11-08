@@ -5,11 +5,12 @@ local Config = {}
 
 -- Debug flags
 Config.debug = false  -- General debug info (lights, sprites, etc)
+Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
 
 -- Star configuration
 Config.stars = {
-	count = 500,
+	count = 100,
 	-- Color probabilities (must sum to 1.0)
 	colors = {
 		{color = 37, probability = 0.40},  -- 40% chance
@@ -40,6 +41,9 @@ Config.ship = {
 	position = {x = 0, y = 0, z = 0},
 	rotation = {pitch = 0, yaw = 0, roll = 0},
 	model_file = "shippy1.obj",
+	speed = 0,  -- Current ship speed (0-1)
+	max_speed = 10,  -- Maximum speed value
+	speed_smoothing = 0.1,  -- Speed interpolation smoothing
 }
 
 -- Sphere configuration
@@ -53,27 +57,27 @@ Config.sphere = {
 
 -- Planet configuration
 Config.planet = {
-	position = {x = 100, y = 0, z = 0},  -- To the right
+	position = {x = 50, y = 0, z = 0},  -- To the right (closer for visibility)
 	rotation = {pitch = 0, yaw = 0, roll = 0},
-	radius = 50,
+	radius = 20,  -- Smaller radius to fit in view
 	segments = 16,  -- More segments for smoother sphere
 	stacks = 8,
 	sprite_id = 24,  -- Sprite to use for texture
-	spin_speed = 0.0001,  -- Rotation speed
+	spin_speed = 0.0001,  -- Rotation speed (faster for visibility)
 }
 
 -- Lighting configuration
 Config.lighting = {
-	yaw = 0.8,  -- Initial light yaw
-	pitch = -0.5,  -- Initial light pitch
-	brightness = 1.0,
+	yaw = 0.19,  -- Initial light yaw
+	pitch = -0.96,  -- Initial light pitch
+	brightness = 2.0,
 	ambient = 0.2,
 	rotation_speed = 0.005,  -- Light rotation speed with WASD
 }
 
 -- Rendering configuration
 Config.rendering = {
-	render_distance = 20,
+	render_distance = 200,  -- Increased for distant objects like planet
 	clear_color = 0,  -- Dark blue/black background
 }
 
