@@ -31,7 +31,7 @@ Config.stars = {
 -- Camera configuration
 Config.camera = {
 	distance = 30,
-	height = 20,  -- Camera elevation above ground (y position)
+	height = 0,  -- Camera elevation above ground (y position of focus point)
 	rx = 0.25,  -- Initial rotation X (0.25 = looking straight down)
 	ry = 0,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed

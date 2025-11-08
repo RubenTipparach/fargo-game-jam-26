@@ -122,39 +122,46 @@ function get_light_direction()
 end
 
 -- Project a 3D point to screen space
--- Uses simplified transformation (NOT camera-relative) for raycast compatibility
+-- Transforms from world space to screen space accounting for camera position and rotation
 function project_point(x, y, z, camera)
 	local cam_dist = camera.distance or 5
 	local tan_half_fov = 0.7002075
 	local proj_scale = 270 / tan_half_fov
 
-	-- Apply camera rotation (same as renderer)
+	-- Translate to camera space (relative to focus point)
+	local cx = x - camera.x
+	local cy = y - camera.y
+	local cz = z - camera.z
+
+	-- Apply camera rotation
 	local sin_ry, cos_ry = sin(camera.ry), cos(camera.ry)
 	local sin_rx, cos_rx = sin(camera.rx), cos(camera.rx)
 
-	local x1 = x * cos_ry - z * sin_ry
-	local z1 = x * sin_ry + z * cos_ry
-	local y2 = y * cos_rx - z1 * sin_rx
-	local z2 = y * sin_rx + z1 * cos_rx
+	-- Yaw rotation (around Y axis)
+	local x1 = cx * cos_ry - cz * sin_ry
+	local z1 = cx * sin_ry + cz * cos_ry
 
+	-- Pitch rotation (around X axis)
+	local y2 = cy * cos_rx - z1 * sin_rx
+	local z2 = cy * sin_rx + z1 * cos_rx
+
+	-- Add camera distance and negate for view space
 	local x3 = -x1
 	local y3 = -y2
-	local z3 = y * sin_rx + z2 * cos_rx + cam_dist
+	local z3 = z2 + cam_dist
 
 	-- Project to screen
 	if z3 > 0.01 then
 		local inv_z = 1 / z3
-		local px = -x1 * inv_z * proj_scale + 240
-		local py = -y2 * inv_z * proj_scale + 135
+		local px = x3 * inv_z * proj_scale + 240
+		local py = y3 * inv_z * proj_scale + 135
 		return px, py, z3
 	end
 	return nil, nil, nil
 end
 
--- Raycast from screen coordinates to horizontal plane (y=0, normal 0,1,0)
--- Inverts the simplified project_point transformation
--- Returns world x,z coordinates where ray intersects the plane, or nil if no intersection
-function raycast_to_ground_plane(screen_x, screen_y, camera)
+-- Unproject a screen point to world space at a given view space depth
+local function unproject_point(screen_x, screen_y, view_z, camera)
 	local cam_dist = camera.distance or 5
 	local tan_half_fov = 0.7002075
 	local proj_scale = 270 / tan_half_fov
@@ -163,34 +170,54 @@ function raycast_to_ground_plane(screen_x, screen_y, camera)
 	local sin_ry, cos_ry = sin(camera.ry), cos(camera.ry)
 	local sin_rx, cos_rx = sin(camera.rx), cos(camera.rx)
 
-	-- Unproject screen to view space at arbitrary depth
-	-- From: px = -x1 / z3 * proj_scale + 240
-	--       py = -y2 / z3 * proj_scale + 135
-	local z3 = cam_dist + 10
-	local neg_x1 = (screen_x - 240) / proj_scale * z3
-	local neg_y2 = (screen_y - 135) / proj_scale * z3
-	local x1 = -neg_x1
-	local y2 = -neg_y2
+	-- Unproject screen to view space
+	-- From: px = x3 / z3 * proj_scale + 240
+	--       py = y3 / z3 * proj_scale + 135
+	local z3 = view_z
+	local x3 = (screen_x - 240) / proj_scale * z3
+	local y3 = (screen_y - 135) / proj_scale * z3
 
-	-- Invert pitch rotation
-	-- Forward was: y2 = y * cos_rx - z1 * sin_rx
-	--              z2 = y * sin_rx + z1 * cos_rx
-	-- Inverse (rotation matrix transpose):
+	-- Invert negation: x3 = -x1, y3 = -y2
+	local x1 = -x3
+	local y2 = -y3
+
+	-- Invert camera distance: z3 = z2 + cam_dist
 	local z2 = z3 - cam_dist
-	local y = y2 * cos_rx - z2 * sin_rx
-	local z1 = y2 * sin_rx + z2 * cos_rx
 
-	-- Invert yaw rotation
-	-- x1 = x * cos_ry - z * sin_ry
-	-- z1 = x * sin_ry + z * cos_ry
-	local x = x1 * cos_ry + z1 * sin_ry
-	local z = -x1 * sin_ry + z1 * cos_ry
+	-- Invert pitch rotation (transpose of rotation matrix)
+	local cy = y2 * cos_rx + z2 * sin_rx
+	local z1 = -y2 * sin_rx + z2 * cos_rx
 
-	-- x, y, z is a point in world space that the ray passes through
-	-- Ray direction is from camera position to (x, y, z)
-	local ray_x = x - camera.x
-	local ray_y = y - camera.y
-	local ray_z = z - camera.z
+	-- Invert yaw rotation (transpose of rotation matrix)
+	local cx = x1 * cos_ry + z1 * sin_ry
+	local cz = -x1 * sin_ry + z1 * cos_ry
+
+	-- cx, cy, cz are in camera space (relative to focus point)
+	-- Convert to world space by adding focus point
+	local world_x = cx + camera.x
+	local world_y = cy + camera.y
+	local world_z = cz + camera.z
+
+	return world_x, world_y, world_z
+end
+
+-- Raycast from screen coordinates to horizontal plane (y=0, normal 0,1,0)
+-- Returns world x,z coordinates where ray intersects the plane, or nil if no intersection
+function raycast_to_ground_plane(screen_x, screen_y, camera)
+	-- Unproject at two depths to get ray origin and direction
+	-- Use near and far points in view space
+	local near_x, near_y, near_z = unproject_point(screen_x, screen_y, 0.1, camera)
+	local far_x, far_y, far_z = unproject_point(screen_x, screen_y, 100, camera)
+
+	-- Ray origin is the near point
+	local ray_origin_x = near_x
+	local ray_origin_y = near_y
+	local ray_origin_z = near_z
+
+	-- Ray direction is from near to far
+	local ray_x = far_x - near_x
+	local ray_y = far_y - near_y
+	local ray_z = far_z - near_z
 
 	-- Normalize ray direction
 	local ray_len = sqrt(ray_x*ray_x + ray_y*ray_y + ray_z*ray_z)
@@ -202,21 +229,21 @@ function raycast_to_ground_plane(screen_x, screen_y, camera)
 	ray_z = ray_z / ray_len
 
 	-- Intersect with y=0 plane
-	-- Ray: P = camera.pos + t * ray_dir
+	-- Ray: P = origin + t * dir
 	-- Plane: y = 0
-	-- camera.y + t * ray_y = 0
+	-- origin_y + t * ray_y = 0
 	if abs(ray_y) < 0.0001 then
 		return nil, nil
 	end
 
-	local t = -camera.y / ray_y
+	local t = -ray_origin_y / ray_y
 
 	if t < 0 then
 		return nil, nil
 	end
 
-	local hit_x = camera.x + t * ray_x
-	local hit_z = camera.z + t * ray_z
+	local hit_x = ray_origin_x + t * ray_x
+	local hit_z = ray_origin_z + t * ray_z
 	return hit_x, hit_z
 end
 
