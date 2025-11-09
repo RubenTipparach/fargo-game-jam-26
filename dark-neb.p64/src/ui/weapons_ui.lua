@@ -48,7 +48,7 @@ function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, c
 
 	-- Draw "show arcs" toggle above weapons
 	local toggle_x = base_x
-	local toggle_y = y
+	local toggle_y = y - 10  -- Move up by 10 pixels
 	local toggle_size = WEAPONS_CONFIG.toggle_size
 
 	-- Check if mouse is hovering over toggle
@@ -204,10 +204,13 @@ end
 -- @param config: global config object
 -- @return array of hitbox tables with x, y, width, height, weapon_id
 function WeaponsUI.get_weapon_hitboxes(config)
-	local screen_height = 240
 	local base_x = WEAPONS_CONFIG.base_x
-	local y = screen_height - 50
+	local base_y = WEAPONS_CONFIG.base_y
+	local y = base_y + 2  -- Match draw_weapons positioning
 	local x = base_x + WEAPONS_CONFIG.color_indicator_width + WEAPONS_CONFIG.color_indicator_spacing
+
+	-- Account for show arcs toggle position
+	y = y + WEAPONS_CONFIG.toggle_size + 5  -- Skip toggle and spacing
 
 	local hitboxes = {}
 
@@ -247,16 +250,19 @@ end
 -- @param config: global config object
 -- @return array of toggle hitboxes with x, y, size, weapon_id
 function WeaponsUI.get_toggle_hitboxes(config)
-	local screen_height = 240
 	local base_x = WEAPONS_CONFIG.base_x
-	local base_y = screen_height - 50
+	local base_y = WEAPONS_CONFIG.base_y
+	local y = base_y + 2  -- Match draw_weapons positioning
 	local toggle_size = 9
 	local x = base_x + WEAPONS_CONFIG.color_indicator_width + WEAPONS_CONFIG.color_indicator_spacing
+
+	-- Account for show arcs toggle position
+	y = y + WEAPONS_CONFIG.toggle_size + 5  -- Skip toggle and spacing
 
 	local hitboxes = {}
 
 	for i = 1, #config.weapons do
-		local weapon_y = base_y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing + WEAPONS_CONFIG.label_spacing)
+		local weapon_y = y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing + WEAPONS_CONFIG.label_spacing)
 		local toggle_x = x + WEAPONS_CONFIG.button_width + 3
 		local toggle_y = weapon_y + 3
 
@@ -300,10 +306,9 @@ end
 -- @param px, py: point coordinates
 -- @return true if toggle clicked, false otherwise
 function WeaponsUI.is_show_arcs_toggle_clicked(px, py)
-	local screen_height = 240
 	local base_x = WEAPONS_CONFIG.base_x
-	local y = screen_height - 50
-	local toggle_y = y - WEAPONS_CONFIG.toggle_spacing
+	local base_y = WEAPONS_CONFIG.base_y
+	local toggle_y = base_y + 2 - 10  -- Match draw_weapons positioning (y - 10)
 	local toggle_size = WEAPONS_CONFIG.toggle_size
 
 	return px >= base_x and px < base_x + toggle_size and

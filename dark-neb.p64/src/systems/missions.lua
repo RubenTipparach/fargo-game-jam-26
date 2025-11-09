@@ -40,7 +40,6 @@ local show_objective_panel = true  -- Whether to show the objective panel
 local ok_button_clicked = false
 
 -- Mission 2 specific tracking
-local mission_2_subsystems_enabled = {impulse = false, weapons = false, shields = false, sensors = false}  -- Track which subsystems are enabled
 local mission_2_targeting_checked = false  -- Whether targeting has been initiated
 local mission_2_satellites_destroyed = 0  -- Count of destroyed satellites
 
@@ -148,7 +147,6 @@ function Missions.init()
 	end
 
 	-- Reset Mission 2 specific tracking variables
-	mission_2_subsystems_enabled = {impulse = false, weapons = false, shields = false, sensors = false}
 	mission_2_targeting_checked = false
 	mission_2_satellites_destroyed = 0
 
@@ -293,36 +291,24 @@ function Missions.update_movement_objective(ship_pos)
 end
 
 -- Update subsystems objective for Mission 2
--- Checks if all required subsystems are enabled
+-- Tracks energy allocation progress (0-8 energy allocated = 0-100% complete)
 function Missions.update_subsystems_objective(energy_system)
 	if current_mission ~= 2 then return end
 
 	local mission = MISSIONS[2]
 	local obj = mission.objectives[1]  -- Subsystems objective
 
-	-- Track which subsystems are enabled (have allocated energy > 0)
-	mission_2_subsystems_enabled.impulse = energy_system.systems.impulse.allocated > 0
-	mission_2_subsystems_enabled.weapons = energy_system.systems.weapons.allocated > 0
-	mission_2_subsystems_enabled.shields = energy_system.systems.shields.allocated > 0
-	mission_2_subsystems_enabled.sensors = energy_system.systems.sensors.allocated > 0
+	-- Calculate total allocated energy (max is 8)
+	local total_allocated = energy_system.systems.impulse.allocated +
+		energy_system.systems.weapons.allocated +
+		energy_system.systems.shields.allocated +
+		energy_system.systems.sensors.allocated
 
-	-- Check if all 4 subsystems are enabled
-	local all_enabled = mission_2_subsystems_enabled.impulse and
-		mission_2_subsystems_enabled.weapons and
-		mission_2_subsystems_enabled.shields and
-		mission_2_subsystems_enabled.sensors
+	-- Progress is based on total energy allocated (0-8 = 0-100%)
+	obj.progress = total_allocated / 8
 
-	-- Progress is based on how many subsystems are enabled (0-4)
-	local enabled_count = 0
-	if mission_2_subsystems_enabled.impulse then enabled_count = enabled_count + 1 end
-	if mission_2_subsystems_enabled.weapons then enabled_count = enabled_count + 1 end
-	if mission_2_subsystems_enabled.shields then enabled_count = enabled_count + 1 end
-	if mission_2_subsystems_enabled.sensors then enabled_count = enabled_count + 1 end
-
-	obj.progress = enabled_count / 4
-
-	-- Mark complete when all subsystems enabled
-	if all_enabled and not obj.completed then
+	-- Mark complete when all 8 energy points are allocated
+	if total_allocated >= 8 and not obj.completed then
 		obj.completed = true
 		mission_data[2].objectives["subsystems"].completed = true
 		if not shown_dialogs["subsystems_done"] then
@@ -408,11 +394,11 @@ function Missions.show_next_objective()
 			elseif mission.id == 2 then
 				-- Mission 2 instructions
 				if i == 1 then
-					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nClick on energy bars\nto allocate energy\nto subsystems"
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nClick on energy bar nto allocate \nenergy to subsystems"
 				elseif i == 2 then
-					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nRight click on\na satellite to\ntarget it"
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nRight click on a satellite to target it"
 				elseif i == 3 then
-					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nMove into range\nand firing arc.\nFire weapons to\ndestroy both\nsatellites"
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nMove into range and firing arc.\nFire weapons to destroy both satellites"
 				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
@@ -471,15 +457,31 @@ function Missions.advance_mission()
 		last_camera_ry = 0
 		last_camera_rx = 0
 		last_ship_heading_angle = 0
+		initial_movement_distance = nil  -- Reset movement distance tracker for new mission
+		next_objective_index = 1  -- Reset to first objective of new mission
 
-		-- Initialize next mission's data if needed
+		-- Reset Mission 2 specific tracking variables
+		mission_2_targeting_checked = false
+		mission_2_satellites_destroyed = 0
+
+		-- Initialize next mission's data and reset all objective progress
 		local mission = MISSIONS[current_mission]
-		if mission and not mission_data[mission.id] then
-			mission_data[mission.id] = {
-				started = false,
-				completed = false,
-				objectives = {}
-			}
+		if mission then
+			-- Reset all objective progress values for new mission
+			for _, obj in ipairs(mission.objectives) do
+				obj.progress = 0
+				obj.completed = false
+			end
+
+			-- Initialize mission_data if needed
+			if not mission_data[mission.id] then
+				mission_data[mission.id] = {
+					started = false,
+					completed = false,
+					objectives = {}
+				}
+			end
+
 			for _, obj in ipairs(mission.objectives) do
 				mission_data[mission.id].objectives[obj.id] = {
 					progress = 0,
@@ -487,6 +489,9 @@ function Missions.advance_mission()
 				}
 			end
 		end
+
+		-- Show first objective for new mission
+		Missions.show_next_objective()
 
 		return true
 	end
@@ -584,15 +589,18 @@ end
 -- Draw help panel overlay (call this LAST, after all other UI)
 -- @param mouse_x, mouse_y: optional mouse coordinates for button hover detection
 function Missions.draw_help_panel(mouse_x, mouse_y)
-	-- Draw toggle button in top-right corner
-	local toggle_x = 470
-	local toggle_y = 10
+	-- Draw toggle button in top-right corner of the dialog panel
+	local toggle_x = help_panel_x + 200   -- Right edge of panel (panel width is 200)
+	local toggle_y = help_panel_y
 	local toggle_size = 12
 
 	-- Check if mouse is hovering over toggle
 	local toggle_hovered = mouse_x and mouse_y and
 		mouse_x >= toggle_x and mouse_x <= toggle_x + toggle_size and
 		mouse_y >= toggle_y and mouse_y <= toggle_y + toggle_size
+
+	-- Draw drop shadow for toggle button
+	rectfill(toggle_x + 2, toggle_y + 2, toggle_x + toggle_size + 2, toggle_y + toggle_size + 2, 1)
 
 	-- Draw toggle button
 	local toggle_color = show_objective_panel and 10 or 1
@@ -704,31 +712,36 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 
 	-- Check if this is the mission success message
 	local is_success_message = text == "Mission Success!!!\n\nClick OK to return\nto main menu"
-	local title = is_success_message and "SUCCESS" or "MISSION OBJECTIVE"
-
-	-- Draw dithered drop shadow behind panel
-	-- Use a dithering pattern for visual depth
-	for dy = 2, 6 do
-		for dx = 2, 6 do
-			-- Create dither pattern (sparse pixels)
-			if (dx + dy) % 2 == 0 then
-				pset(panel_x + panel_width + dx, panel_y + dy, 1)
-			end
-		end
+	local current_mission_obj = Missions.get_current_mission()
+	local title = is_success_message and "SUCCESS" or ("MISSION " .. (current_mission_obj and current_mission_obj.id or 1))
+	local subtitle = ""
+	if not is_success_message and current_mission_obj then
+		subtitle = current_mission_obj.name
 	end
 
 	-- Draw panel background
-	rectfill(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 0)
+	-- rectfill(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 0)
+
+	-- Draw border drop shadow
+	-- rect(panel_x + 2, panel_y + 2, panel_x + panel_width + 2, panel_y + panel_height + 2, 1)
 
 	-- Draw border (bright for visibility)
-	rect(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 11)
+	-- rect(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 11)
 
-	-- Draw title
+	-- Draw title with drop shadow
+	print(title, panel_x + 3, panel_y + 3, 1)
 	print(title, panel_x + 2, panel_y + 2, 10)
 
-	-- Draw text (word wrap for narrower panel)
+	-- Draw subtitle if available (mission name)
+	if subtitle ~= "" then
+		print(subtitle, panel_x + 3, panel_y + 11, 1)
+		print(subtitle, panel_x + 2, panel_y + 10, 6)
+	end
+
+	-- Draw text (word wrap for narrower panel) with drop shadow
 	local text_x = panel_x + 2
 	local text_y = panel_y + 25
+	print(text, text_x + 1, text_y + 1, 1)
 	print(text, text_x, text_y, 7)
 
 	-- Draw current objective progress bar (if not success message)

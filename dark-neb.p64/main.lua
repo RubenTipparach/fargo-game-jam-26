@@ -1153,7 +1153,7 @@ function draw_total_energy_bar()
 	for i = 1, total_bars do
 		local rect_y = bar_y + (i - 1) * (bar_height + spacing)
 		local rect_y2 = rect_y + bar_height
-		local color = i <= total_allocated and 7 or 0  -- White if filled, black if empty
+		local color = i <= total_allocated and 0 or 7  -- Black if filled (allocated), white if empty
 
 		-- Draw filled rectangle
 		rectfill(bar_x, rect_y, bar_x + bar_width, rect_y2, color)
@@ -1196,6 +1196,8 @@ function handle_energy_clicks(mx, my)
 						energy_system[system_name] = min(current + available, system_cfg.capacity)
 					end
 				end
+				-- Sync the Config energy with the local energy_system
+				Config.energy.systems[system_name].allocated = energy_system[system_name]
 				printh("Energy allocated: " .. system_name .. " = " .. energy_system[system_name])
 				return true
 			end
@@ -1258,6 +1260,12 @@ function _update()
 					Config.energy.systems.shields.allocated = 0
 					Config.energy.systems.sensors.allocated = 0
 					Config.energy.systems.tractor_beam.allocated = 0
+					-- Reset local energy_system table to match
+					energy_system.weapons = 0
+					energy_system.impulse = 0
+					energy_system.shields = 0
+					energy_system.sensors = 0
+					energy_system.tractor_beam = 0
 				end
 			end
 
@@ -1287,8 +1295,8 @@ function _update()
 	-- Cache ship position at start of update
 	ship_pos = Config.ship.position
 
-	-- Check for objective panel toggle click (top-right corner)
-	local panel_toggle_x = 470
+	-- Check for objective panel toggle click (top-right corner of dialog panel)
+	local panel_toggle_x = 180 + 200  -- Dialog panel x=180 + width 200
 	local panel_toggle_y = 10
 	local panel_toggle_size = 12
 	if (mb & 1 == 1) and not last_mouse_button_state then  -- Click detected
@@ -1304,9 +1312,8 @@ function _update()
 	                    my >= slider_y and my <= slider_y + slider_height
 
 	-- Check if mouse is over energy UI area (but not weapons UI or help panel)
-	-- Help panel is at (10, 10) and is 200x80
-	local over_help_panel = mx >= 10 and mx <= 210 and my >= 10 and my <= 90
-	local over_energy_ui = mx < 200 and my < 100 and not over_help_panel
+	-- Help panel is at (180, 10) with width 200, so it extends to x=380
+	local over_energy_ui = mx < 180 and my < 100
 
 	-- Check if button is newly pressed this frame (was not pressed last frame, is pressed now)
 	local button_pressed = (mb & 1 == 1) and not last_mouse_button_state
