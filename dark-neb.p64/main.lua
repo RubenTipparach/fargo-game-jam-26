@@ -1115,12 +1115,12 @@ function _update()
 		                        camera_left_dir.z * target_left_dir.z
 
 		-- DEBUG OUTPUT
-		printh("=== CAMERA TARGET LOCK ===")
-		printh("target_dir: (" .. flr(camera_target_heading_dir.x*1000)/1000 .. "," .. flr(camera_target_heading_dir.z*1000)/1000 .. ")")
-		printh("current_dir: (" .. flr(camera_heading_dir.x*1000)/1000 .. "," .. flr(camera_heading_dir.z*1000)/1000 .. ")")
-		printh("dot: " .. flr(dot*10000)/10000)
-		printh("alignment_check: " .. flr(alignment_check*10000)/10000)
-		printh("left_dot: " .. flr(left_dot*10000)/10000)
+		-- printh("=== CAMERA TARGET LOCK ===")
+		-- printh("target_dir: (" .. flr(camera_target_heading_dir.x*1000)/1000 .. "," .. flr(camera_target_heading_dir.z*1000)/1000 .. ")")
+		-- printh("current_dir: (" .. flr(camera_heading_dir.x*1000)/1000 .. "," .. flr(camera_heading_dir.z*1000)/1000 .. ")")
+		-- printh("dot: " .. flr(dot*10000)/10000)
+		-- printh("alignment_check: " .. flr(alignment_check*10000)/10000)
+		-- printh("left_dot: " .. flr(left_dot*10000)/10000)
 
 		-- Only rotate if not already at target (alignment_check < 0.001 means perfectly aligned)
 		if abs(alignment_check) > 0.001 then
@@ -1132,13 +1132,13 @@ function _update()
 			-- Smooth out the rotation as we get closer to alignment
 			local smoothed_rotation = left_dot * turn_rate
 
-			printh("rotation_direction: " .. flr(rotation_direction*10000)/10000)
-			printh("smoothed_rotation: " .. flr(smoothed_rotation*10000)/10000)
+			-- printh("rotation_direction: " .. flr(rotation_direction*10000)/10000)
+			-- printh("smoothed_rotation: " .. flr(smoothed_rotation*10000)/10000)
 
 			-- Update camera.ry with smoothed rotation
 			camera.ry = camera.ry + smoothed_rotation
 
-			printh("new_camera.ry: " .. flr(camera.ry*10000)/10000)
+			-- printh("new_camera.ry: " .. flr(camera.ry*10000)/10000)
 		end
 
 		-- Preserve pitch from before targeting
@@ -1650,27 +1650,27 @@ function _draw()
 		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
 	end
 
-	local ship_pos = Config.ship.position
-	local heading_length = 20
-	local current_heading_end_x = ship_pos.x + camera_heading_dir.x * heading_length
-	local current_heading_end_z = ship_pos.z + camera_heading_dir.z * heading_length
-	draw_line_3d(ship_pos.x, ship_pos.y + 3, ship_pos.z, current_heading_end_x, ship_pos.y + 3, current_heading_end_z, camera, 12)  -- Bright magenta
+	-- local ship_pos = Config.ship.position
+	-- local heading_length = 20
+	-- local current_heading_end_x = ship_pos.x + camera_heading_dir.x * heading_length
+	-- local current_heading_end_z = ship_pos.z + camera_heading_dir.z * heading_length
+	-- draw_line_3d(ship_pos.x, ship_pos.y + 3, ship_pos.z, current_heading_end_x, ship_pos.y + 3, current_heading_end_z, camera, 12)  -- Bright magenta
 
-	-- Draw camera heading direction visualization when locked to target
-	if selected_target  then
+	-- -- Draw camera heading direction visualization when locked to target
+	-- if selected_target  then
 		
-		local sat_pos = satellite_pos
+	-- 	local sat_pos = satellite_pos
 
-		-- Draw line from ship to satellite (target line)
-		draw_line_3d(ship_pos.x, ship_pos.y, ship_pos.z, sat_pos.x, sat_pos.y, sat_pos.z, camera, 11)
+	-- 	-- Draw line from ship to satellite (target line)
+	-- 	draw_line_3d(ship_pos.x, ship_pos.y, ship_pos.z, sat_pos.x, sat_pos.y, sat_pos.z, camera, 11)
 
-		-- Draw camera current heading direction (from ship in camera heading direction)
+	-- 	-- Draw camera current heading direction (from ship in camera heading direction)
 
-		-- Draw camera target heading direction (to satellite direction)
-		local target_heading_end_x = ship_pos.x + camera_target_heading_dir.x * heading_length
-		local target_heading_end_z = ship_pos.z + camera_target_heading_dir.z * heading_length
-		draw_line_3d(ship_pos.x, ship_pos.y + 2, ship_pos.z, target_heading_end_x, ship_pos.y + 2, target_heading_end_z, camera, 10)  -- Bright yellow
-	end
+	-- 	-- Draw camera target heading direction (to satellite direction)
+	-- 	local target_heading_end_x = ship_pos.x + camera_target_heading_dir.x * heading_length
+	-- 	local target_heading_end_z = ship_pos.z + camera_target_heading_dir.z * heading_length
+	-- 	draw_line_3d(ship_pos.x, ship_pos.y + 2, ship_pos.z, target_heading_end_x, ship_pos.y + 2, target_heading_end_z, camera, 10)  -- Bright yellow
+	-- end
 
 	-- Draw speed slider
 	-- Slider track (background)
