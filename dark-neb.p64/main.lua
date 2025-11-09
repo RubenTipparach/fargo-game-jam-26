@@ -1125,19 +1125,20 @@ function _update()
 		-- Only rotate if not already at target (alignment_check < 0.001 means perfectly aligned)
 		if abs(alignment_check) > 0.001 then
 			-- Determine rotation direction from left_dot sign
-			local turn_rate = 0.001--Config.camera.turn_rate  -- Turn rate in turns per frame
-			local rotation_amount = left_dot > 0 and turn_rate or -turn_rate
+			local turn_rate = 0.01 -- Turn rate in turns per frame
+			local rotation_direction = left_dot > 0 and turn_rate or -turn_rate
 
-			printh("rotation_amount: " .. flr(rotation_amount*10000)/10000)
+			-- Apply smoothing based on how far off we are from target
+			-- Smooth out the rotation as we get closer to alignment
+			local smoothed_rotation = left_dot * turn_rate
 
-			-- Apply rotation to current angle
-			local current_angle = atan2(camera_heading_dir.x, camera_heading_dir.z)
-			local new_angle = current_angle + rotation_amount
+			printh("rotation_direction: " .. flr(rotation_direction*10000)/10000)
+			printh("smoothed_rotation: " .. flr(smoothed_rotation*10000)/10000)
 
-			-- Update camera.ry to match (for compatibility with camera system)
-			camera.ry = rotation_amount +camera.ry
+			-- Update camera.ry with smoothed rotation
+			camera.ry = camera.ry + smoothed_rotation
 
-			printh("new_angle: " .. flr(new_angle*10000)/10000)
+			printh("new_camera.ry: " .. flr(camera.ry*10000)/10000)
 		end
 
 		-- Preserve pitch from before targeting
