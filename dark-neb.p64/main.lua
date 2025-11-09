@@ -22,6 +22,9 @@ Renderer = include("src/engine/renderer.lua")
 RendererLit = include("src/engine/renderer_lit.lua")
 RenderFlat = include("src/engine/render_flat.lua")
 Quat = include("src/engine/quaternion.lua")
+DebugRenderer = include("src/debug_renderer.lua")
+ExplosionRenderer = include("src/engine/explosion_renderer.lua")
+Explosion = include("src/particles/explosion.lua")
 Config = include("config.lua")
 
 -- ============================================
@@ -80,6 +83,9 @@ local raycast_z = nil
 local current_health = Config.health.max_health
 local is_dead = false
 local death_time = 0
+
+-- Explosions
+local active_explosions = {}
 
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
@@ -1044,7 +1050,25 @@ function _update()
 			current_health = 0
 			is_dead = true
 			death_time = 0
+
+			-- Spawn explosion at ship position
+			if Config.explosion.enabled then
+				table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+			end
 		end
+	end
+
+	-- Update explosions
+	for i = #active_explosions, 1, -1 do
+		local explosion = active_explosions[i]
+		if not explosion:update(0.016) then  -- 60fps = ~0.016s per frame
+			table.remove(active_explosions, i)
+		end
+	end
+
+	-- Update death timer
+	if is_dead then
+		death_time = death_time + 0.016
 	end
 end
 
@@ -1147,6 +1171,9 @@ function _draw()
 			add(all_faces, shippy_faces[i])
 		end
 	end
+
+	-- Render explosions and add to face list with proper depth sorting
+	ExplosionRenderer.render_explosions(active_explosions, camera, all_faces)
 
 	-- Sort all faces by depth
 	RendererLit.sort_faces(all_faces)
@@ -1416,10 +1443,10 @@ function _draw()
 		draw_box_wireframe(ship_box_min_x, ship_box_min_y, ship_box_min_z,
 		                   ship_box_max_x, ship_box_max_y, ship_box_max_z, camera, 3)  -- Cyan box
 
-		-- Draw planet collider wireframe
+		-- Draw planet collider wireframe using DebugRenderer
 		local planet_collider = Config.planet.collider
 		local planet_pos = Config.planet.position
-		draw_sphere_wireframe(planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
 	end
 
 	-- Draw health bar at top left
@@ -1480,6 +1507,7 @@ function _draw()
 				ship_speed = 0
 				target_ship_speed = 0
 				particle_trails = {}
+				active_explosions = {}
 				ship_heading_dir = {x = 0, z = 1}
 				target_heading_dir = {x = 0, z = 1}
 			end

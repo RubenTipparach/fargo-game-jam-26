@@ -7,7 +7,7 @@ local Config = {}
 Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
-Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
+Config.debug_physics = true  -- Show physics bounding boxes and collision wireframes
 
 -- Star configuration
 Config.stars = {
@@ -43,7 +43,7 @@ Config.camera = {
 Config.ship = {
 	position = {x = 0, y = 0, z = 0},
 	rotation = {pitch = 0, yaw = 0, roll = 0},
-	model_file = "shippy1.obj",
+	model_file = "models/shippy1.obj",
 	sprite_id = 5,  -- Ship texture sprite
 	speed = 0,  -- Current ship speed (0-1)
 	max_speed = 1,  -- Maximum speed value
@@ -132,6 +132,16 @@ Config.health = {
 	health_bar_height = 10,
 	health_bar_x = 10,  -- Top left X position
 	health_bar_y = 10,  -- Top left Y position
+}
+
+-- Explosion particle configuration
+Config.explosion = {
+	enabled = true,  -- Enable explosions on death
+	sprite_id = 19,  -- Sprite ID for explosion (big explosion sprite)
+	quad_size = 2,  -- Initial quad size (50 units on each side, 10x larger)
+	max_scale = 3.0,  -- Maximum scale multiplier (grows to 3x size)
+	lifetime = 5.0,  -- Explosion lifetime in seconds
+	dither_enabled = true,  -- Apply dithering for growing/fading effect
 }
 
 return Config
