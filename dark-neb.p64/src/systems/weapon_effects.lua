@@ -34,11 +34,16 @@ local EXPLOSION_CONFIG = {
 local SMOKE_CONFIG = {
 	sprite_id = 18,  -- Smoke sprite
 	max_particles = 4,
-	lifetime = 2.0,  -- Longer smoke duration for more persistent effect
+	lifetime = 4.0,  -- Longer smoke duration for more persistent effect
 	growth_time = 0.2,  -- Time to reach max size (slower growth)
 	initial_scale = 0.5,
-	max_scale = 2.0,
-	spawn_interval = 0.35,  -- Time between smoke spawns when object is damaged (seconds)
+	max_scale = 1.0,
+	spawn_interval = 1,  -- Time between smoke spawns when object is damaged (seconds)
+	-- Velocity configuration for spawned smoke
+	velocity_x_spread = 0.4,      -- Horizontal X velocity spread (±0.2)
+	velocity_y_base = 0.8,        -- Base upward velocity
+	velocity_y_spread = 0.3,      -- Variation in upward velocity (0.8 to 1.1)
+	velocity_z_spread = 0.4,      -- Horizontal Z velocity spread (±0.2)
 }
 
 -- Autonomous smoke spawners (objects that spawn smoke when damaged)
@@ -174,11 +179,11 @@ function WeaponEffects.spawn_smoke(pos, velocity)
 	local pos_y = pos.y + (rnd(spawn_offset * 2) - spawn_offset)
 	local pos_z = pos.z + (rnd(spawn_offset * 2) - spawn_offset)
 
-	-- Default velocity with random horizontal spread - faster upward movement
+	-- Default velocity with random horizontal spread - uses config values
 	local vel = velocity or {
-		x = (rnd(0.4) - 0.2),  -- Random horizontal X movement (-0.2 to 0.2)
-		y = 0.8 + rnd(0.3),    -- Faster upward movement with variation (0.8 to 1.1)
-		z = (rnd(0.4) - 0.2),  -- Random horizontal Z movement (-0.2 to 0.2)
+		x = (rnd(SMOKE_CONFIG.velocity_x_spread) - SMOKE_CONFIG.velocity_x_spread / 2),
+		y = SMOKE_CONFIG.velocity_y_base + rnd(SMOKE_CONFIG.velocity_y_spread),
+		z = (rnd(SMOKE_CONFIG.velocity_z_spread) - SMOKE_CONFIG.velocity_z_spread / 2),
 	}
 
 	-- Randomize smoke size by about 20% (0.8 to 1.2 scale multiplier)
