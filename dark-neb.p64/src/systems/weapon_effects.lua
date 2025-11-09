@@ -77,14 +77,27 @@ end
 
 -- Get mesh face for rendering
 function Beam:get_mesh_face(camera)
-	local half_size = self.width
+	-- Calculate beam direction and length
+	local dx = self.end_pos.x - self.start_pos.x
+	local dy = self.end_pos.y - self.start_pos.y
+	local dz = self.end_pos.z - self.start_pos.z
+	local beam_length = sqrt(dx*dx + dy*dy + dz*dz)
 
-	-- Camera right vector
+	if beam_length < 0.01 then
+		return nil  -- Beam is too short
+	end
+
+	-- Normalize beam direction
+	dx = dx / beam_length
+	dy = dy / beam_length
+	dz = dz / beam_length
+
+	-- Calculate camera right and up vectors for billboarding
 	local right_x = cos(camera.ry)
 	local right_y = 0
 	local right_z = -sin(camera.ry)
 
-	-- Camera up vector (cross product)
+	-- Camera forward for up vector
 	local forward_x = sin(camera.ry) * cos(camera.rx)
 	local forward_y = sin(camera.rx)
 	local forward_z = cos(camera.ry) * cos(camera.rx)
@@ -93,13 +106,50 @@ function Beam:get_mesh_face(camera)
 	local up_y = -(forward_z * right_x - forward_x * right_z)
 	local up_z = -(forward_x * right_y - forward_y * right_x)
 
-	-- Simple billboard quad at end_pos (target position)
+	-- Normalize up vector
+	local up_len = sqrt(up_x*up_x + up_y*up_y + up_z*up_z)
+	if up_len > 0 then
+		up_x = up_x / up_len
+		up_y = up_y / up_len
+		up_z = up_z / up_len
+	end
+
+	-- Calculate perpendicular vectors to beam direction
+	-- Use cross product of beam direction and up to get true perpendicular
+	local perp_x = forward_y * dz - forward_z * dy
+	local perp_y = forward_z * dx - forward_x * dz
+	local perp_z = forward_x * dy - forward_y * dx
+
+	local perp_len = sqrt(perp_x*perp_x + perp_y*perp_y + perp_z*perp_z)
+	if perp_len > 0 then
+		perp_x = perp_x / perp_len
+		perp_y = perp_y / perp_len
+		perp_z = perp_z / perp_len
+	end
+
+	local half_size = self.width
+
+	-- Calculate midpoint
+	local mid_x = (self.start_pos.x + self.end_pos.x) / 2
+	local mid_y = (self.start_pos.y + self.end_pos.y) / 2
+	local mid_z = (self.start_pos.z + self.end_pos.z) / 2
+
+	-- Create beam quad vertices along the beam line
+	-- The beam stretches from start to end, perpendicular to camera view
 	local verts = {
-		{x = -right_x * half_size + up_x * half_size, y = -right_y * half_size + up_y * half_size, z = -right_z * half_size + up_z * half_size},
-		{x = right_x * half_size + up_x * half_size, y = right_y * half_size + up_y * half_size, z = right_z * half_size + up_z * half_size},
-		{x = right_x * half_size - up_x * half_size, y = right_y * half_size - up_y * half_size, z = right_z * half_size - up_z * half_size},
-		{x = -right_x * half_size - up_x * half_size, y = -right_y * half_size - up_y * half_size, z = -right_z * half_size - up_z * half_size},
+		-- Start point, bottom-left
+		{x = self.start_pos.x - perp_x * half_size, y = self.start_pos.y - perp_y * half_size, z = self.start_pos.z - perp_z * half_size},
+		-- Start point, bottom-right
+		{x = self.start_pos.x + perp_x * half_size, y = self.start_pos.y + perp_y * half_size, z = self.start_pos.z + perp_z * half_size},
+		-- End point, bottom-right
+		{x = self.end_pos.x + perp_x * half_size, y = self.end_pos.y + perp_y * half_size, z = self.end_pos.z + perp_z * half_size},
+		-- End point, bottom-left
+		{x = self.end_pos.x - perp_x * half_size, y = self.end_pos.y - perp_y * half_size, z = self.end_pos.z - perp_z * half_size},
 	}
+
+	-- Fade progress for beam fade-out effect
+	local fade_progress = self.age / self.lifetime
+	local opacity = max(0, 1.0 - fade_progress)
 
 	local faces = {
 		{1, 2, 3, self.sprite_id, vec(0,0), vec(16,0), vec(16,16)},
@@ -109,10 +159,10 @@ function Beam:get_mesh_face(camera)
 	return {
 		verts = verts,
 		faces = faces,
-		x = self.end_pos.x,
-		y = self.end_pos.y,
-		z = self.end_pos.z,
-		opacity = 1.0
+		x = mid_x,
+		y = mid_y,
+		z = mid_z,
+		opacity = opacity
 	}
 end
 
@@ -350,7 +400,7 @@ function WeaponEffects.render_beams(camera, all_faces)
 							p1 = p1,
 							p2 = p2,
 							p3 = p3,
-							fog = 0,
+							dither_opacity = mesh.opacity,  -- Apply beam fade effect
 							unlit = true
 						})
 					end

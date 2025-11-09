@@ -953,7 +953,8 @@ end
 -- Draw energy bars for each system
 function draw_energy_bars()
 	local energy_cfg = Config.energy
-	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
+	-- Hide tractor beam UI for now - will implement later
+	local systems_list = {"weapons", "impulse", "shields", --[["tractor_beam",]] "sensors"}
 
 	-- Draw vertical total energy bar on the left
 	draw_total_energy_bar()
