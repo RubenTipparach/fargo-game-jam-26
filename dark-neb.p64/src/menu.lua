@@ -6,28 +6,31 @@ local Menu = {}
 
 Menu.state = "menu"  -- "menu", "playing", "game_over"
 Menu.selected_mission = 1
-Menu.missions = {
-	{
-		name = "Space Academy",
-		description = "Learn ship controls and basic combat at Space Academy",
-	},
-	{
-		name = "Academy Certification",
-		description = "First AI combat simulation at the Space Academy",
-	},
-	{
-		name = "Outer Ring Patrol",
-		description = "Advanced patrol mission in deep space",
-	},
-	{
-		name = "Border Skirmish",
-		description = "Intense engagement near hostile territory",
-	},
-	{
-		name = "Last Stand",
-		description = "Final mission against a space station.",
-	},
-}
+Menu.missions = nil  -- Will be populated from config
+
+-- Initialize menu with missions from config
+function Menu.init(config)
+	if not config or not config.missions then
+		return
+	end
+
+	Menu.missions = {}
+	-- Build mission list from config
+	if config.missions.mission_1 then
+		table.insert(Menu.missions, {
+			id = "mission_1",
+			name = "Mission 1",
+			description = config.missions.mission_1.description,
+		})
+	end
+	if config.missions.mission_2 then
+		table.insert(Menu.missions, {
+			id = "mission_2",
+			name = "Mission 2",
+			description = config.missions.mission_2.description,
+		})
+	end
+end
 
 -- Draw the menu
 function Menu.draw()

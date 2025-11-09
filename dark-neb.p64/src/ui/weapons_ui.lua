@@ -11,6 +11,7 @@ local WEAPONS_CONFIG = {
 	button_width = 80,
 	button_height = 15,
 	spacing = 5,
+	label_spacing = 12,  -- Space above button for status label
 	text_color = 7,
 	bg_color_normal = 24,  -- Maroon background
 	bg_color_available = 24,  -- Maroon when available
@@ -18,6 +19,10 @@ local WEAPONS_CONFIG = {
 	border_color = 7,
 	color_indicator_width = 8,  -- Width of color square to the left
 	color_indicator_spacing = 2,  -- Space between color square and button
+	status_color_in_range = 11,  -- Green for in range
+	status_color_out_of_range = 8,  -- Red for out of range
+	toggle_size = 9,  -- Size of the arcs toggle button
+	toggle_spacing =25,  -- Space above weapons for the toggle
 }
 
 -- Draw the weapons UI
@@ -27,18 +32,52 @@ local WEAPONS_CONFIG = {
 -- @param config: global config object
 -- @param mouse_x: current mouse X position (for tooltip)
 -- @param mouse_y: current mouse Y position (for tooltip)
-function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, config, mouse_x, mouse_y)
+-- @param ship_pos: current ship position for range/arc checks
+-- @param ship_heading_dir: current ship heading direction vector {x, z}
+-- @param current_target: current selected target (for range/arc validation)
+-- @param weapon_effects: WeaponEffects module for range/arc functions
+-- @param camera: camera object for drawing firing arc
+-- @param draw_line_3d: function to draw 3D lines
+function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, config, mouse_x, mouse_y, ship_pos, ship_heading_dir, current_target, weapon_effects, camera, draw_line_3d)
 	local screen_height = 240
 
 	-- Position at lower-left corner
 	local base_x = WEAPONS_CONFIG.base_x
 	local y = screen_height - 50  -- 50 pixels from bottom
 
+	-- Draw "show arcs" toggle above weapons
+	local toggle_x = base_x
+	local toggle_y = y - WEAPONS_CONFIG.toggle_spacing
+	local toggle_size = WEAPONS_CONFIG.toggle_size
+
+	-- Check if mouse is hovering over toggle
+	local toggle_hovered = mouse_x and mouse_y and
+		mouse_x >= toggle_x and mouse_x < toggle_x + toggle_size and
+		mouse_y >= toggle_y and mouse_y < toggle_y + toggle_size
+
+	-- Toggle background
+	local toggle_color = config.show_firing_arcs and 11 or 1
+	rectfill(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, toggle_color)
+	rect(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, 7)
+
+	-- Draw tooltip if hovering over toggle
+	if toggle_hovered then
+		local arcs_status = config.show_firing_arcs and "on" or "off"
+		local tooltip_text = "show arcs " .. arcs_status
+		-- Draw tooltip to the right
+		local tooltip_x = toggle_x + toggle_size + 5
+		local tooltip_y = toggle_y
+		-- Draw text shadow
+		print(tooltip_text, tooltip_x + 1, tooltip_y + 1, 1)
+		-- Draw text
+		print(tooltip_text, tooltip_x, tooltip_y, WEAPONS_CONFIG.text_color)
+	end
+
 	-- Use weapons from config
 	local weapons = config.weapons
 
 	for i, weapon in ipairs(weapons) do
-		local weapon_y = y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing)
+		local weapon_y = y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing + WEAPONS_CONFIG.label_spacing)
 
 		-- Get weapon state
 		local state = weapon_states[i] or {charge = 0}
@@ -54,6 +93,32 @@ function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, c
 		local button_hovered = mouse_x and mouse_y and
 			mouse_x >= x and mouse_x < x + WEAPONS_CONFIG.button_width and
 			mouse_y >= weapon_y and mouse_y < weapon_y + WEAPONS_CONFIG.button_height
+
+		-- Check if target is in range and firing arc
+		local in_range = false
+		local in_arc = false
+		if current_target and ship_pos and ship_heading_dir and weapon_effects then
+			in_range = weapon_effects.is_in_range(ship_pos, current_target.position, weapon.range)
+			in_arc = weapon_effects.is_in_firing_arc(ship_pos, ship_heading_dir, current_target.position, weapon.arc_start, weapon.arc_end)
+		end
+
+		-- Draw status label above button
+		local status_label = ""
+		local status_color = WEAPONS_CONFIG.status_color_out_of_range
+		if current_target then
+			if not in_range then
+				status_label = "range: " .. weapon.range
+				status_color = WEAPONS_CONFIG.status_color_out_of_range
+			elseif not in_arc then
+				status_label = "out of arc"
+				status_color = WEAPONS_CONFIG.status_color_out_of_range
+			else
+				status_label = "valid"
+				status_color = WEAPONS_CONFIG.status_color_in_range
+			end
+			-- Draw status label
+			print(status_label, x, weapon_y - WEAPONS_CONFIG.label_spacing, status_color)
+		end
 
 		-- Draw color indicator square to the left
 		local color_x = base_x
@@ -91,36 +156,43 @@ function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, c
 		print(display_text, text_x, text_y, WEAPONS_CONFIG.text_color)
 
 		-- Draw auto-fire toggle to the right
-		local toggle_x = x + WEAPONS_CONFIG.button_width + 3
-		local toggle_y = weapon_y + 3
-		local toggle_size = 9
+		local auto_fire_toggle_x = x + WEAPONS_CONFIG.button_width + 3
+		local auto_fire_toggle_y = weapon_y + 3
+		local auto_fire_toggle_size = 9
 
 		-- Check if mouse is hovering over this toggle
-		local toggle_hovered = mouse_x and mouse_y and
-			mouse_x >= toggle_x and mouse_x < toggle_x + toggle_size and
-			mouse_y >= toggle_y and mouse_y < toggle_y + toggle_size
+		local auto_fire_toggle_hovered = mouse_x and mouse_y and
+			mouse_x >= auto_fire_toggle_x and mouse_x < auto_fire_toggle_x + auto_fire_toggle_size and
+			mouse_y >= auto_fire_toggle_y and mouse_y < auto_fire_toggle_y + auto_fire_toggle_size
 
 		-- Toggle background
-		local toggle_color = (weapon_states[i] and weapon_states[i].auto_fire) and 9 or 1
-		rectfill(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, toggle_color)
-		rect(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, 7)
+		local auto_fire_toggle_color = (weapon_states[i] and weapon_states[i].auto_fire) and 9 or 1
+		rectfill(auto_fire_toggle_x, auto_fire_toggle_y, auto_fire_toggle_x + auto_fire_toggle_size, auto_fire_toggle_y + auto_fire_toggle_size, auto_fire_toggle_color)
+		rect(auto_fire_toggle_x, auto_fire_toggle_y, auto_fire_toggle_x + auto_fire_toggle_size, auto_fire_toggle_y + auto_fire_toggle_size, 7)
 
 		-- Show checkmark if auto-fire is enabled
 		-- if weapon_states[i] and weapon_states[i].auto_fire then
-		-- 	print("X", toggle_x + 3, toggle_y+2, 0)
+		-- 	print("X", auto_fire_toggle_x + 3, auto_fire_toggle_y+2, 0)
 		-- end
 
 		-- Draw tooltip if hovering over toggle
-		if toggle_hovered then
+		if auto_fire_toggle_hovered then
 			local auto_fire_status = (weapon_states[i] and weapon_states[i].auto_fire) and "on" or "off"
-			local tooltip_text = "auto fire " .. auto_fire_status
+			local tooltip_text = "auto " .. auto_fire_status
 			-- Draw tooltip above the toggle
-			local tooltip_x = toggle_x + 15
-			local tooltip_y = toggle_y 
+			local tooltip_x = auto_fire_toggle_x + 15
+			local tooltip_y = auto_fire_toggle_y
 			-- Draw text shadow
 			print(tooltip_text, tooltip_x + 1, tooltip_y + 1, 1)
 			-- Draw text
 			print(tooltip_text, tooltip_x, tooltip_y, WEAPONS_CONFIG.text_color)
+		end
+
+		-- Draw firing arc visualization when hovering or when show_firing_arcs is enabled
+		local should_draw_arc = (button_hovered or config.show_firing_arcs) and weapon_effects and camera and draw_line_3d and ship_pos and ship_heading_dir
+		if should_draw_arc then
+			local arc_color = in_range and in_arc and 11 or 8  -- Green if valid, red if invalid
+			weapon_effects.draw_firing_arc(ship_pos, ship_heading_dir, weapon.range, weapon.arc_start, weapon.arc_end, camera, draw_line_3d, arc_color)
 		end
 	end
 end
@@ -137,7 +209,7 @@ function WeaponsUI.get_weapon_hitboxes(config)
 	local hitboxes = {}
 
 	for i = 1, #config.weapons do
-		local weapon_y = y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing)
+		local weapon_y = y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing + WEAPONS_CONFIG.label_spacing)
 
 		table.insert(hitboxes, {
 			x = x,
@@ -181,7 +253,7 @@ function WeaponsUI.get_toggle_hitboxes(config)
 	local hitboxes = {}
 
 	for i = 1, #config.weapons do
-		local weapon_y = base_y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing)
+		local weapon_y = base_y + (i - 1) * (WEAPONS_CONFIG.button_height + WEAPONS_CONFIG.spacing + WEAPONS_CONFIG.label_spacing)
 		local toggle_x = x + WEAPONS_CONFIG.button_width + 3
 		local toggle_y = weapon_y + 3
 
@@ -219,6 +291,20 @@ end
 -- @return weapon_id if hovering, nil otherwise
 function WeaponsUI.get_weapon_hover(px, py, config)
 	return WeaponsUI.get_weapon_at_point(px, py, config)
+end
+
+-- Check if point is on the show arcs toggle button
+-- @param px, py: point coordinates
+-- @return true if toggle clicked, false otherwise
+function WeaponsUI.is_show_arcs_toggle_clicked(px, py)
+	local screen_height = 240
+	local base_x = WEAPONS_CONFIG.base_x
+	local y = screen_height - 50
+	local toggle_y = y - WEAPONS_CONFIG.toggle_spacing
+	local toggle_size = WEAPONS_CONFIG.toggle_size
+
+	return px >= base_x and px < base_x + toggle_size and
+		   py >= toggle_y and py < toggle_y + toggle_size
 end
 
 return WeaponsUI

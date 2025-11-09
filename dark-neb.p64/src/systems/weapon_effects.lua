@@ -1,8 +1,11 @@
---[[pod_format="raw",created="2024-11-09 00:00:00",modified="2024-11-09 00:00:00",revision=0]]
+--[[pod_format="raw",created="2024-11-09 00:00:00",modified="2025-11-09 13:18:36",revision=2]]
 -- Weapon Effects System
 -- Handles beams, explosions, and smoke effects
 
 local WeaponEffects = {}
+
+-- Configuration reference (set via setup function)
+local Config = nil
 
 -- Load particle systems
 local Explosion = require("src.particles.explosion")
@@ -45,6 +48,13 @@ local SMOKE_CONFIG = {
 	velocity_y_spread = 0.3,      -- Variation in upward velocity (0.8 to 1.1)
 	velocity_z_spread = 0.4,      -- Horizontal Z velocity spread (±0.2)
 }
+-- Helper function to calculate collision damage
+-- Config is passed in at runtime from main.lua
+local function calculate_collision_damage(base_dmg, armor, config)
+	armor = armor or (config and config.collision.default_armor) or 0.5
+	local armor_factor = config and config.collision.armor_factor or 2.0
+	return base_dmg * (1 + armor_factor * (1 - armor))
+end
 
 -- Autonomous smoke spawners (objects that spawn smoke when damaged)
 -- Each entry: {object=ref, health_threshold=0.3, last_spawn_time=0, spawn_pos_fn=function}
@@ -223,6 +233,11 @@ function Beam:_create_dual_segment_mesh(dx, dy, dz, beam_length, split_distance)
 	}
 end
 
+-- Initialize WeaponEffects with config reference
+function WeaponEffects.setup(config)
+	Config = config
+end
+
 -- Fire a beam from origin towards target
 -- @param origin: {x, y, z} starting position
 -- @param target: {x, y, z} target position
@@ -273,6 +288,26 @@ function WeaponEffects.spawn_explosion(pos, target)
 	end
 
 	return explosion
+end
+
+-- Apply collision damage to a target based on armor rating
+-- @param target: target object with current_health, max_health, armor
+function WeaponEffects.apply_collision_damage(target)
+	if not target or not target.current_health or not target.max_health then
+		return
+	end
+
+	local base_damage = Config and Config.collision.base_damage or 5
+	local damage = calculate_collision_damage(base_damage, target.armor, Config)
+
+	target.current_health = target.current_health - damage
+	if target.current_health < 0 then
+		target.current_health = 0
+	end
+
+	local target_name = target.id or "target"
+	local health_percent = (target.current_health / target.max_health) * 100
+	printh(target_name .. " collision damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
 end
 
 -- Spawn smoke particle at position
@@ -639,8 +674,8 @@ function WeaponEffects.update_smoke_spawners(dt)
 	for i = #smoke_spawners, 1, -1 do
 		local spawner = smoke_spawners[i]
 
-		-- Remove if object is no longer valid
-		if not spawner.object or not spawner.object.current_health then
+		-- Remove if object is no longer valid or has been destroyed
+		if not spawner.object or not spawner.object.current_health or spawner.object.is_destroyed then
 			table.remove(smoke_spawners, i)
 		else
 			local health_ratio = spawner.object.current_health / spawner.object.max_health
@@ -663,6 +698,171 @@ function WeaponEffects.update_smoke_spawners(dt)
 				-- Reset timer if above threshold
 				spawner.last_spawn_time = 0
 			end
+		end
+	end
+end
+
+-- Check if a target is within weapon range
+-- @param ship_pos: {x, y, z} ship position
+-- @param target_pos: {x, y, z} target position
+-- @param range: maximum firing distance
+-- @return: true if target is in range
+function WeaponEffects.is_in_range(ship_pos, target_pos, range)
+	if not ship_pos or not target_pos or not range then
+		return false
+	end
+
+	local dx = target_pos.x - ship_pos.x
+	local dz = target_pos.z - ship_pos.z
+	local distance_sq = dx * dx + dz * dz
+	local range_sq = range * range
+
+	return distance_sq <= range_sq
+end
+
+-- Check if a target is within weapon firing arc
+-- Simplified 2D dot product test in X,Z space
+-- @param ship_pos: {x, y, z} ship position
+-- @param ship_heading: ship heading in turns (0-1 range, 0 = +Z axis) OR direction vector {x, z}
+-- @param target_pos: {x, y, z} target position
+-- @param arc_start: left edge of arc in degrees (negative = left)
+-- @param arc_end: right edge of arc in degrees (positive = right)
+-- @return: true if target is within firing arc
+function WeaponEffects.is_in_firing_arc(ship_pos, ship_heading, target_pos, arc_start, arc_end)
+	if not ship_pos or not target_pos or not ship_heading then
+		return false
+	end
+
+	-- Get ship forward direction - handle both numeric heading and direction vector
+	local ship_forward_x, ship_forward_z
+	if ship_heading.x and ship_heading.z then
+		-- Direction vector format {x, z}
+		ship_forward_x = ship_heading.x
+		ship_forward_z = ship_heading.z
+	else
+		-- Numeric heading in turns (0-1 range)
+		-- 0 = +Z, 0.25 = +X, 0.5 = -Z, 0.75 = -X
+		local ship_heading_rad = ship_heading * 2 * 3.14159265359
+		ship_forward_x = math.sin(ship_heading_rad)
+		ship_forward_z = math.cos(ship_heading_rad)
+	end
+
+	-- Vector from ship to target
+	local to_target_x = target_pos.x - ship_pos.x
+	local to_target_z = target_pos.z - ship_pos.z
+
+	-- Normalize to_target
+	local to_target_len = math.sqrt(to_target_x * to_target_x + to_target_z * to_target_z)
+	if to_target_len < 0.001 then
+		return false  -- Target is at ship position
+	end
+
+	to_target_x = to_target_x / to_target_len
+	to_target_z = to_target_z / to_target_len
+
+	-- Dot product with ship forward = cosine of angle between them
+	local dot = ship_forward_x * to_target_x + ship_forward_z * to_target_z
+
+	-- Calculate actual angle from dot product (in degrees, 0 = aligned with forward)
+	local angle = math.acos(math.max(-1, math.min(1, dot))) * 180 / 3.14159265359
+
+	-- Cross product to determine left vs right
+	-- (ship_forward × to_target) in 2D: forward.x * target.z - forward.z * target.x
+	local cross = ship_forward_x * to_target_z - ship_forward_z * to_target_x
+
+	-- If cross < 0, target is to the right (negative angle)
+	if cross < 0 then
+		angle = -angle
+	end
+
+	-- Check if angle is within arc
+	return angle >= arc_start and angle <= arc_end
+end
+
+-- Draw firing arc visualization in 3D space
+-- Draws radial lines from ship in 25-unit segments to show firing arc
+-- @param ship_pos: {x, y, z} ship position
+-- @param ship_heading: ship heading in turns (0-1 range) OR direction vector {x, z}
+-- @param range: firing range (distance)
+-- @param arc_start: left edge of arc in degrees
+-- @param arc_end: right edge of arc in degrees
+-- @param camera: camera object with view matrix
+-- @param draw_line_3d: function to draw 3D lines
+-- @param color: line color
+function WeaponEffects.draw_firing_arc(ship_pos, ship_heading, range, arc_start, arc_end, camera, draw_line_3d, color)
+	if not ship_pos or not camera or not draw_line_3d then
+		return
+	end
+
+	-- Get ship forward direction - handle both numeric heading and direction vector
+	local ship_forward_x, ship_forward_z
+	if ship_heading.x and ship_heading.z then
+		-- Direction vector format {x, z}
+		ship_forward_x = ship_heading.x
+		ship_forward_z = ship_heading.z
+	else
+		-- Numeric heading in turns (0-1 range)
+		local ship_heading_rad = ship_heading * 2 * 3.14159265359
+		ship_forward_x = math.sin(ship_heading_rad)
+		ship_forward_z = math.cos(ship_heading_rad)
+	end
+
+	-- Draw radial line segments of 25 units each
+	local segment_length = 25
+	local num_segments = math.ceil(range / segment_length)
+
+	-- Draw arc edges (the two boundary lines of the arc)
+	for side = 1, 2 do
+		local arc_angle = side == 1 and arc_start or arc_end
+		local arc_angle_rad = arc_angle * 3.14159265359 / 180
+
+		-- Rotate the ship forward direction by the arc angle (rotate in the ship's local coordinate system)
+		local rotated_x = ship_forward_x * math.cos(arc_angle_rad) - ship_forward_z * math.sin(arc_angle_rad)
+		local rotated_z = ship_forward_x * math.sin(arc_angle_rad) + ship_forward_z * math.cos(arc_angle_rad)
+
+		-- Draw segments along this edge
+		for seg = 0, num_segments - 1 do
+			local start_dist = seg * segment_length
+			local end_dist = math.min((seg + 1) * segment_length, range)
+
+			local seg_start_x = ship_pos.x + rotated_x * start_dist
+			local seg_start_z = ship_pos.z + rotated_z * start_dist
+
+			local seg_end_x = ship_pos.x + rotated_x * end_dist
+			local seg_end_z = ship_pos.z + rotated_z * end_dist
+
+			draw_line_3d(seg_start_x, ship_pos.y, seg_start_z, seg_end_x, ship_pos.y, seg_end_z, camera, color)
+		end
+	end
+
+	-- Draw arc curve segments (connecting the two edges at various distances)
+	for arc_dist = segment_length, range, segment_length do
+		local arc_segments = 8
+		local total_arc = arc_end - arc_start
+
+		for seg = 0, arc_segments - 1 do
+			local angle1 = arc_start + (total_arc * (seg / arc_segments))
+			local angle2 = arc_start + (total_arc * ((seg + 1) / arc_segments))
+
+			local angle1_rad = angle1 * 3.14159265359 / 180
+			local angle2_rad = angle2 * 3.14159265359 / 180
+
+			-- Rotate ship forward by both angles (rotate in the ship's local coordinate system)
+			local rotated1_x = ship_forward_x * math.cos(angle1_rad) - ship_forward_z * math.sin(angle1_rad)
+			local rotated1_z = ship_forward_x * math.sin(angle1_rad) + ship_forward_z * math.cos(angle1_rad)
+
+			local rotated2_x = ship_forward_x * math.cos(angle2_rad) - ship_forward_z * math.sin(angle2_rad)
+			local rotated2_z = ship_forward_x * math.sin(angle2_rad) + ship_forward_z * math.cos(angle2_rad)
+
+			-- Points on arc curve
+			local p1_x = ship_pos.x + rotated1_x * arc_dist
+			local p1_z = ship_pos.z + rotated1_z * arc_dist
+
+			local p2_x = ship_pos.x + rotated2_x * arc_dist
+			local p2_z = ship_pos.z + rotated2_z * arc_dist
+
+			-- Draw arc segment
+			draw_line_3d(p1_x, ship_pos.y, p1_z, p2_x, ship_pos.y, p2_z, camera, color)
 		end
 	end
 end

@@ -9,6 +9,7 @@ Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
 Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
 Config.enable_x_button = false  -- Enable X button input (disabled for now)
+Config.show_firing_arcs = false  -- Always show firing arc visualization
 
 -- Star configuration
 Config.stars = {
@@ -55,6 +56,7 @@ Config.ship = {
 	turn_rate = 0.0008,  -- Turns per frame (higher = faster turns)
 	heading_arc_radius = 5,  -- Radius of the heading arc indicator
 	heading_arc_segments = 8,  -- Number of segments for the arc
+	armor = 0.8,  -- Armor rating (0-1): lower = takes more collision damage
 	-- Box collider for collision detection
 	collider = {
 		type = "box",
@@ -161,6 +163,13 @@ Config.health = {
 	health_bar_y = 10,  -- Top left Y position
 }
 
+-- Collision damage configuration
+Config.collision = {
+	base_damage = 5,  -- Base damage per frame during collision
+	armor_factor = 2.0,  -- How much armor affects damage (lower armor = more damage)
+	default_armor = 0.5,  -- Default armor if not specified
+}
+
 -- Battlefield configuration
 Config.battlefield = {
 	map_size = 512,  -- Map is 512x512 units
@@ -181,7 +190,7 @@ Config.explosion = {
 	slow_growth_factor = 0.2,  -- Additional growth during fade phase (20%)
 
 	-- Fade behavior
-	lifetime = 2.0,  -- Total explosion lifetime in seconds
+	lifetime = 3.5,  -- Total explosion lifetime in seconds
 	fade_start_ratio = 0.5,  -- When fade starts (0.5 = halfway through lifetime)
 
 	-- Spread
@@ -196,11 +205,17 @@ Config.weapons = {
 		name = "Photon Beam A",
 		energy_cost = 2,  -- Minimum energy required to fire
 		charge_time = 3,  -- Time in seconds to charge
+		range = 50,  -- Maximum firing distance
+		arc_start = -60,  -- Left edge of firing arc (degrees)
+		arc_end = 30,  -- Right edge of firing arc (degrees)
 	},
 	{
 		name = "Photon Beam B",
 		energy_cost = 4,  -- Minimum energy required to fire
 		charge_time = 3,  -- Time in seconds to charge
+		range = 50,  -- Maximum firing distance
+		arc_start = -30,  -- Left edge of firing arc (degrees)
+		arc_end = 60,  -- Right edge of firing arc (degrees)
 	},
 }
 
@@ -254,9 +269,24 @@ Config.energy = {
 
 -- Mission configurations
 Config.missions = {
-	-- Mission 1: Tutorial/Starting mission
+	-- Mission 1: Tutorial/Starting mission - no enemies, focus on controls
 	mission_1 = {
 		name = "Mission 1: Tutorial",
+		description = "Learn basic controls",
+		ship_start = {x = 0, y = 0, z = 0},
+		planet_start = {x = 50, y = 0, z = 0},
+		-- No satellites for tutorial mission
+		satellites = {},
+		objectives = {
+			{
+				type = "tutorial",
+				description = "Master ship controls",
+			},
+		},
+	},
+	-- Mission 2: Weapon systems with enemy satellites
+	mission_2 = {
+		name = "Mission 2: Weapons & Targeting",
 		description = "Destroy the satellites",
 		ship_start = {x = 0, y = 0, z = 0},
 		planet_start = {x = 50, y = 0, z = 0},
@@ -270,6 +300,7 @@ Config.missions = {
 				sprite_id = 2,
 				max_health = 100,
 				current_health = 100,
+				armor = 1.5,  -- Less armored than ship
 				sensor_range = 200,
 				collider = {
 					type = "box",
@@ -286,6 +317,7 @@ Config.missions = {
 				sprite_id = 2,
 				max_health = 100,
 				current_health = 100,
+				armor = 1.5,  -- Less armored than ship
 				sensor_range = 200,
 				collider = {
 					type = "box",

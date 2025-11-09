@@ -33,6 +33,7 @@ Button = include("src/ui/button.lua")
 ArcUI = include("src/ui/arc_ui.lua")
 WeaponsUI = include("src/ui/weapons_ui.lua")
 WeaponEffects = include("src/systems/weapon_effects.lua")
+Missions = include("src/systems/missions.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -60,6 +61,7 @@ local mouse_drag = false
 local last_mouse_x = 0
 local last_mouse_y = 0
 local last_mouse_button_state = false  -- Track previous frame's button state for click detection
+local mission_success_time = 0  -- Timer for mission success scene
 
 -- Ship speed control
 local ship_speed = Config.ship.speed
@@ -107,7 +109,10 @@ local is_out_of_bounds = false
 -- Player health wrapper for smoke spawner registration
 -- This allows the smoke spawner to track player health dynamically
 local player_health_obj = {
-	max_health = Config.health.max_health
+	id = "player_ship",
+	current_health = Config.health.max_health,
+	max_health = Config.health.max_health,
+	armor = Config.ship.armor,
 }
 
 -- Explosions
@@ -127,6 +132,17 @@ local energy_system = {
 
 -- Cached position variables for efficiency
 local ship_pos = nil  -- Current ship position (updated each frame)
+
+-- Ship object for collision tracking
+local ship = {
+	id = "player_ship",
+	type = "ship",
+	armor = Config.ship.armor,
+	collision_cooldown = 0,  -- Cooldown since last collision
+}
+
+-- Track colliding pairs to apply damage only once per contact
+local collision_pairs = {}  -- {ship_id1 = {ship_id2 = true}}
 
 -- Weapon selection and charging state
 local selected_weapon = nil  -- Currently selected weapon (1 or 2)
@@ -877,6 +893,15 @@ function _init()
 	-- Initialize color table for lit rendering
 	RendererLit.init_color_table()
 
+	-- Initialize weapon effects with config
+	WeaponEffects.setup(Config)
+
+	-- Initialize missions system
+	Missions.init()
+
+	-- Initialize menu with available missions
+	Menu.init(Config)
+
 	-- Initialize UI renderer
 	UIRenderer.init(
 		{panel = Panel, button = Button, minimap = Minimap, menu = Menu},
@@ -969,11 +994,62 @@ function _init()
 				is_destroyed = false,
 				health = sat_config.current_health,
 			current_health = sat_config.current_health,  -- For damage system
-			max_health = sat_config.max_health  -- For damage system
+			max_health = sat_config.max_health,  -- For damage system
+			armor = sat_config.armor,  -- Armor rating (0-1): lower = takes more collision damage
+			collision_cooldown = 0,  -- Cooldown since last collision with another ship
 			}
 
 			table.insert(enemy_ships, enemy)
 
+		end
+	end
+end
+
+-- Load satellites for current mission
+function reload_mission_satellites()
+	local current_mission_num = Missions.get_current_mission().id
+	local mission = current_mission_num == 1 and Config.missions.mission_1 or Config.missions.mission_2
+
+	-- Reset enemy ships list
+	enemy_ships = {}
+	destroyed_enemies = {}
+
+	if mission.satellites and #mission.satellites > 0 then
+		-- Load satellite model from first satellite config
+		local first_sat_config = mission.satellites[1]
+		model_satellite = load_obj(first_sat_config.model_file)
+
+		if model_satellite then
+			printh("Satellite loaded: " .. #model_satellite.verts .. " vertices, " .. #model_satellite.faces .. " faces")
+		else
+			printh("WARNING: Failed to load " .. first_sat_config.model_file)
+		end
+
+		-- Create enemy ship objects from mission satellites
+		for i, sat_config in ipairs(mission.satellites) do
+			-- Create position reference
+			local sat_position = {
+				x = sat_config.position.x,
+				y = sat_config.position.y,
+				z = sat_config.position.z
+			}
+
+			-- Create enemy ship object
+			local enemy = {
+				id = sat_config.id,
+				type = "satellite",
+				position = sat_position,
+				config = sat_config,
+				model = model_satellite,
+				is_destroyed = false,
+				health = sat_config.current_health,
+				current_health = sat_config.current_health,  -- For damage system
+				max_health = sat_config.max_health,  -- For damage system
+				armor = sat_config.armor,  -- Armor rating (0-1): lower = takes more collision damage
+				collision_cooldown = 0,  -- Cooldown since last collision with another ship
+			}
+
+			table.insert(enemy_ships, enemy)
 		end
 	end
 end
@@ -1141,7 +1217,11 @@ function _update()
 		local input = {
 			select = keyp("return") or keyp("z"),
 		}
-		local mouse_click = (mb & 1) == 1
+		-- Block menu clicks for one frame after returning from mission
+		local mouse_click = ((mb & 1) == 1) and not skip_next_menu_click
+		if skip_next_menu_click then
+			skip_next_menu_click = false  -- Reset flag for next frame
+		end
 
 		if Menu.update(input, mx, my, mouse_click) then
 			-- Campaign selected, start game
@@ -1154,6 +1234,16 @@ function _update()
 
 			-- Reset player health wrapper
 			player_health_obj.current_health = current_health
+
+			-- Reset player ship state
+			Config.ship.position = {x = 0, y = 0, z = 0}
+			Config.ship.heading = 0
+			ship_speed = Config.ship.speed
+			target_ship_speed = Config.ship.speed
+			slider_speed_desired = Config.ship.speed
+
+			-- Reset mission camera tracking
+			Missions.init()  -- Initialize missions with all state reset
 
 			-- Register autonomous smoke spawners for player and satellite
 			-- Player ship: spawn smoke when health < 30%
@@ -1184,8 +1274,10 @@ function _update()
 	local over_slider = mx >= slider_x - 5 and mx <= slider_x + slider_width + 5 and
 	                    my >= slider_y and my <= slider_y + slider_height
 
-	-- Check if mouse is over energy UI area (but not weapons UI)
-	local over_energy_ui = mx < 200 and my < 100
+	-- Check if mouse is over energy UI area (but not weapons UI or help panel)
+	-- Help panel is at (10, 10) and is 200x80
+	local over_help_panel = mx >= 10 and mx <= 210 and my >= 10 and my <= 90
+	local over_energy_ui = mx < 200 and my < 100 and not over_help_panel
 
 	-- Check if button is newly pressed this frame (was not pressed last frame, is pressed now)
 	local button_pressed = (mb & 1 == 1) and not last_mouse_button_state
@@ -1203,66 +1295,88 @@ function _update()
 			build_energy_hitboxes()
 			handle_energy_clicks(mx, my)
 		elseif button_pressed then
-			-- Check for weapon selection clicks on main button
-			local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
-			if weapon_id then
-				-- Fire weapon if charged and has energy
-				local weapon = Config.weapons[weapon_id]
-				local state = weapon_states[weapon_id]
-				local has_energy = energy_system.weapons >= weapon.energy_cost
-				local is_charged = has_energy and state.charge >= 1.0
+			-- Check for mission OK button click first
+			if Missions.check_ok_button_click(mx, my, button_pressed) then
+				-- OK button was clicked on mission success screen, return to menu
+				game_state = "menu"
+				Missions.init()  -- Reset missions for next playthrough
+				-- Skip the next menu click to prevent clicking mission buttons while mouse is held
+				skip_next_menu_click = true
+			-- Check for show arcs toggle click
+			elseif WeaponsUI.is_show_arcs_toggle_clicked(mx, my) then
+				Config.show_firing_arcs = not Config.show_firing_arcs
+				printh("Show firing arcs: " .. (Config.show_firing_arcs and "ON" or "OFF"))
+			else
+				-- Check for weapon selection clicks on main button
+				local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
+				if weapon_id then
+					-- Fire weapon if charged and has energy
+					local weapon = Config.weapons[weapon_id]
+					local state = weapon_states[weapon_id]
+					local has_energy = energy_system.weapons >= weapon.energy_cost
+					local is_charged = has_energy and state.charge >= 1.0
 
-				if is_charged and current_selected_target then
-					-- Fire beam at selected target
-					local target_pos = nil
-					local target_ref = nil
+					if is_charged and current_selected_target then
+						-- Fire beam at selected target
+						local target_pos = nil
+						local target_ref = nil
 
-					if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
-						target_pos = current_selected_target.position
-						target_ref = current_selected_target  -- Pass enemy object, not config
-					elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
-						target_pos = Config.planet.position
-						target_ref = Config.planet
-					end
-
-					if target_pos and target_ref then
-						-- Fire beam
-						WeaponEffects.fire_beam(ship_pos, target_pos)
-
-						-- Spawn explosion at target (damage is applied in spawn_explosion)
-						WeaponEffects.spawn_explosion(target_pos, target_ref)
-
-						-- Check if target should spawn smoke (health > 70% damaged = health < 30%)
-						if target_ref.current_health and target_ref.max_health then
-							local health_percent = target_ref.current_health / target_ref.max_health
-							if health_percent < 0.3 then  -- Damage is > 70%
-								-- Try to spawn smoke at target location with slight random offset
-								local smoke_offset_x = (math.random() - 0.5) * 4
-								local smoke_offset_z = (math.random() - 0.5) * 4
-								local smoke_pos = {
-									x = target_pos.x + smoke_offset_x,
-									y = target_pos.y + 2,
-									z = target_pos.z + smoke_offset_z
-								}
-								WeaponEffects.spawn_smoke(smoke_pos, {x = 0, y = 0.3, z = 0})
-							end
+						if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
+							target_pos = current_selected_target.position
+							target_ref = current_selected_target  -- Pass enemy object, not config
+						elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
+							target_pos = Config.planet.position
+							target_ref = Config.planet
 						end
 
-						-- Reset charge after firing
-						state.charge = 0
-						printh("Weapon " .. weapon_id .. " fired! Damage: " .. (target_ref.current_health or "N/A"))
+						if target_pos and target_ref then
+							-- Check if target is in range and in firing arc
+							local in_range = WeaponEffects.is_in_range(ship_pos, target_pos, weapon.range)
+							local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
+
+							if in_range and in_arc then
+								-- Fire beam
+								WeaponEffects.fire_beam(ship_pos, target_pos)
+
+								-- Spawn explosion at target (damage is applied in spawn_explosion)
+								WeaponEffects.spawn_explosion(target_pos, target_ref)
+
+								-- Check if target should spawn smoke (health > 70% damaged = health < 30%)
+								if target_ref.current_health and target_ref.max_health then
+									local health_percent = target_ref.current_health / target_ref.max_health
+									if health_percent < 0.3 then  -- Damage is > 70%
+										-- Try to spawn smoke at target location with slight random offset
+										local smoke_offset_x = (math.random() - 0.5) * 4
+										local smoke_offset_z = (math.random() - 0.5) * 4
+										local smoke_pos = {
+											x = target_pos.x + smoke_offset_x,
+											y = target_pos.y + 2,
+											z = target_pos.z + smoke_offset_z
+										}
+										WeaponEffects.spawn_smoke(smoke_pos, {x = 0, y = 0.3, z = 0})
+									end
+								end
+
+								-- Reset charge after firing
+								state.charge = 0
+								printh("Weapon " .. weapon_id .. " fired! Damage: " .. (target_ref.current_health or "N/A"))
+							else
+								-- Cannot fire - out of range or out of arc
+								printh("Weapon " .. weapon_id .. " cannot fire: " .. (not in_range and "out of range" or "out of arc"))
+							end
+						end
+					else
+						-- Just select weapon for reference
+						selected_weapon = weapon_id
+						printh("Weapon " .. weapon_id .. " selected (not ready)")
 					end
 				else
-					-- Just select weapon for reference
-					selected_weapon = weapon_id
-					printh("Weapon " .. weapon_id .. " selected (not ready)")
-				end
-			else
-				-- Check for auto-fire toggle clicks
-				local toggle_id = WeaponsUI.get_toggle_at_point(mx, my, Config)
-				if toggle_id then
-					weapon_states[toggle_id].auto_fire = not weapon_states[toggle_id].auto_fire
-					printh("Weapon " .. toggle_id .. " auto-fire toggled: " .. (weapon_states[toggle_id].auto_fire and "ON" or "OFF"))
+					-- Check for auto-fire toggle clicks
+					local toggle_id = WeaponsUI.get_toggle_at_point(mx, my, Config)
+					if toggle_id then
+						weapon_states[toggle_id].auto_fire = not weapon_states[toggle_id].auto_fire
+						printh("Weapon " .. toggle_id .. " auto-fire toggled: " .. (weapon_states[toggle_id].auto_fire and "ON" or "OFF"))
+					end
 				end
 			end
 		elseif not slider_dragging then
@@ -1361,23 +1475,25 @@ function _update()
 		end
 	end
 
-	-- WASD controls for light rotation
-	local light_rotation_speed = Config.lighting.rotation_speed
-	if keyp("left") or keyp("a") then
-		light_yaw = light_yaw - light_rotation_speed
-	end
-	if keyp("right") or keyp("d") then
-		light_yaw = light_yaw + light_rotation_speed
-	end
-	if keyp("up") or keyp("w") then
-		light_pitch = light_pitch - light_rotation_speed
-	end
-	if keyp("down") or keyp("s") then
-		light_pitch = light_pitch + light_rotation_speed
-	end
+	-- WASD controls for light rotation (only when debug_lighting is enabled)
+	if Config.debug_lighting then
+		local light_rotation_speed = Config.lighting.rotation_speed
+		if keyp("left") or keyp("a") then
+			light_yaw = light_yaw - light_rotation_speed
+		end
+		if keyp("right") or keyp("d") then
+			light_yaw = light_yaw + light_rotation_speed
+		end
+		if keyp("up") or keyp("w") then
+			light_pitch = light_pitch - light_rotation_speed
+		end
+		if keyp("down") or keyp("s") then
+			light_pitch = light_pitch + light_rotation_speed
+		end
 
-	-- Clamp light pitch to reasonable range
-	light_pitch = mid(-1.5, light_pitch, 1.5)
+		-- Clamp light pitch to reasonable range
+		light_pitch = mid(-1.5, light_pitch, 1.5)
+	end
 
 	-- X key to fire debug beam (VFX only, no damage logic)
 	if keyp("x") then
@@ -1494,16 +1610,26 @@ function _update()
 			end
 
 			if target_pos and target_ref and ship_pos then
-				-- Fire beam
-				WeaponEffects.fire_beam(ship_pos, target_pos)
+				-- Check if target is in range and in firing arc
+				local weapon = Config.weapons[i]
+				local in_range = WeaponEffects.is_in_range(ship_pos, target_pos, weapon.range)
+				local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
 
-				-- Spawn explosion at target (damage is applied in spawn_explosion)
-				WeaponEffects.spawn_explosion(target_pos, target_ref)
+				if in_range and in_arc then
+					-- Fire beam
+					WeaponEffects.fire_beam(ship_pos, target_pos)
 
-				-- Reset weapon charge after firing
-				state.charge = 0
+					-- Spawn explosion at target (damage is applied in spawn_explosion)
+					WeaponEffects.spawn_explosion(target_pos, target_ref)
 
-				printh("Auto-fire: Weapon " .. i .. " fired at target")
+					-- Reset weapon charge after firing
+					state.charge = 0
+
+					printh("Auto-fire: Weapon " .. i .. " fired at target")
+				else
+					-- Cannot fire - out of range or out of arc
+					printh("Auto-fire: Weapon " .. i .. " cannot fire: " .. (not in_range and "out of range" or "out of arc"))
+				end
 			end
 		end
 	end
@@ -1647,6 +1773,9 @@ function _update()
 			ship_heading_dir.x = ship_heading_dir.x / len
 			ship_heading_dir.z = ship_heading_dir.z / len
 		end
+
+		-- Sync heading to Config for use in weapon calculations
+		Config.ship.heading = new_angle
 	end
 
 	-- Move ship in direction of heading based on speed (only if alive)
@@ -1775,6 +1904,72 @@ function _update()
 		end
 	end
 
+	-- Check collisions between player ship and enemy ships
+	if not is_dead then
+		local ship_collider = Config.ship.collider
+		local ship_box_min = {
+			x = ship_pos.x - ship_collider.half_size.x,
+			y = ship_pos.y - ship_collider.half_size.y,
+			z = ship_pos.z - ship_collider.half_size.z,
+		}
+		local ship_box_max = {
+			x = ship_pos.x + ship_collider.half_size.x,
+			y = ship_pos.y + ship_collider.half_size.y,
+			z = ship_pos.z + ship_collider.half_size.z,
+		}
+
+		-- Check against each enemy ship
+		for _, enemy in ipairs(enemy_ships) do
+			if not enemy.is_destroyed then
+				local enemy_collider = enemy.config.collider
+				local enemy_box_min = {
+					x = enemy.position.x - enemy_collider.half_size.x,
+					y = enemy.position.y - enemy_collider.half_size.y,
+					z = enemy.position.z - enemy_collider.half_size.z,
+				}
+				local enemy_box_max = {
+					x = enemy.position.x + enemy_collider.half_size.x,
+					y = enemy.position.y + enemy_collider.half_size.y,
+					z = enemy.position.z + enemy_collider.half_size.z,
+				}
+
+				-- Check AABB-AABB collision
+				local collision = (ship_box_min.x < enemy_box_max.x and ship_box_max.x > enemy_box_min.x) and
+					(ship_box_min.y < enemy_box_max.y and ship_box_max.y > enemy_box_min.y) and
+					(ship_box_min.z < enemy_box_max.z and ship_box_max.z > enemy_box_min.z)
+
+				if collision then
+					-- Initialize collision pair tracking if needed
+					if not collision_pairs[ship.id] then
+						collision_pairs[ship.id] = {}
+					end
+
+					local was_colliding = collision_pairs[ship.id][enemy.id]
+
+					-- Apply damage if this is a new collision or ongoing
+					if not was_colliding then
+						printh("COLLISION: Player ship <> " .. enemy.id)
+					end
+
+					-- Apply damage based on armor
+					WeaponEffects.apply_collision_damage(player_health_obj)
+					WeaponEffects.apply_collision_damage(enemy)
+
+					-- Sync player health back from player_health_obj
+					current_health = player_health_obj.current_health
+
+					-- Mark this pair as colliding
+					collision_pairs[ship.id][enemy.id] = true
+				else
+					-- Clear collision tracking when not colliding
+					if collision_pairs[ship.id] then
+						collision_pairs[ship.id][enemy.id] = nil
+					end
+				end
+			end
+		end
+	end
+
 	-- Check if ship is out of bounds (only during gameplay)
 	if game_state == "playing" and not is_dead then
 		if Minimap.is_out_of_bounds(Config.ship.position) then
@@ -1881,6 +2076,26 @@ function _update()
 					camera_pitch_before_targeting = nil
 				end
 			end
+		end
+	end
+
+	-- Update missions (only during gameplay)
+	if game_state == "playing" then
+		-- Update dialog system
+		Missions.update_dialogs(1/60)  -- Assuming 60fps
+
+		-- Update mission 1 objectives
+		Missions.update_camera_objective(camera.ry, camera.rx)
+		local current_heading_angle = atan2(ship_heading_dir.x, ship_heading_dir.z)
+		Missions.update_rotation_objective(current_heading_angle)
+		Missions.update_movement_objective(ship_pos)
+
+		-- Check if current mission is complete
+		if Missions.check_mission_complete() and not Missions.is_mission_complete() then
+			Missions.set_mission_complete()
+			-- Transition to mission success scene
+			game_state = "mission_success"
+			mission_success_time = 0
 		end
 	end
 
@@ -2198,7 +2413,7 @@ function _draw()
 	WeaponEffects.draw(camera, utilities)
 
 	-- Draw weapons UI
-	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my)
+	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my, ship_pos, ship_heading_dir, current_selected_target, WeaponEffects, camera, draw_line_3d)
 
 	-- Debug weapons UI hitboxes
 	if (Config.debug) then
@@ -2211,6 +2426,16 @@ function _draw()
 			rect(hb.x, hb.y, hb.x + hb.size, hb.y + hb.size, 3)  -- Cyan outline
 		end
 		print("mx: " .. mx .. " my: " .. my, 320 - 50, 10, 7)
+	end
+
+	-- Draw missions UI (during gameplay only)
+	if game_state == "playing" then
+		Missions.draw_ui()
+		-- Draw destination marker for current mission
+		local current_mission = Missions.get_current_mission()
+		if current_mission and current_mission.destination then
+			Missions.draw_destination_marker(current_mission.destination, camera, draw_line_3d)
+		end
 	end
 
 	-- CPU usage (drawn via UIRenderer)
@@ -2405,8 +2630,9 @@ function _draw()
 				end
 			end
 
-			-- Draw AABB outline if we have valid screen coordinates
-			if min_screen_x < 999 and max_screen_x > 0 and max_screen_y > 0 and min_screen_y < 128 then
+			-- Draw AABB outline if we have valid screen coordinates (at least partially on screen)
+			-- Allow for off-screen boxes as long as they intersect with screen bounds (0-480 x 0-270)
+			if max_screen_x > 0 and min_screen_x < 480 and max_screen_y > 0 and min_screen_y < 270 then
 				local is_targeted = current_selected_target and current_selected_target == enemy
 				local is_hovered = hovered_target and hovered_target == enemy
 				local box_color = (is_targeted or is_hovered) and enemy.config.bounding_box_color_hover or enemy.config.bounding_box_color_default
@@ -2418,6 +2644,18 @@ function _draw()
 				line(max_screen_x, min_screen_y, max_screen_x, max_screen_y, box_color)
 				line(max_screen_x, max_screen_y, min_screen_x, max_screen_y, box_color)
 				line(min_screen_x, max_screen_y, min_screen_x, min_screen_y, box_color)
+
+				-- Calculate distance from ship to enemy
+				local dx = enemy.position.x - ship_pos.x
+				local dy = enemy.position.y - ship_pos.y
+				local dz = enemy.position.z - ship_pos.z
+				local distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+				local distance_text = string.format("%.1f", distance)
+
+				-- Draw distance label below bounding box
+				local label_x = (min_screen_x + max_screen_x) / 2 - 10  -- Center the text roughly
+				local label_y = max_screen_y + 3  -- Below the box
+				print(distance_text, label_x, label_y, box_color)
 			end
 		end
 	end
@@ -2591,5 +2829,75 @@ function _draw()
 	-- Menu screen
 	if game_state == "menu" then
 		UIRenderer.draw_menu()
+	end
+
+	-- Mission success screen
+	if game_state == "mission_success" then
+		cls(0)  -- Clear screen
+
+		-- Draw "Mission Success!!!" text in center
+		local title = "Mission Success!!!"
+		local title_x = 240 - (#title * 2)
+		print(title, title_x - 1, 50, 0)   -- Shadow
+		print(title, title_x, 49, 11)      -- Yellow text
+
+		-- Draw narrative text about space academy
+		local narrative_lines = {
+			"",
+			"Congratulations, cadet!",
+			"",
+			"Your instructors at the Academy were",
+			"deeply impressed by your performance.",
+			"You've successfully completed your",
+			"first year of training.",
+			"",
+			"However, be warned: the next year",
+			"will be far more challenging.",
+		}
+
+		local text_y = 75
+		local text_color = 7  -- White
+		for _, line in ipairs(narrative_lines) do
+			local text_x = 240 - (#line * 2)
+			print(line, text_x, text_y, text_color)
+			text_y = text_y + 8
+		end
+
+		-- OK button at bottom center
+		local button_y = 180
+		local button_width = 50
+		local button_height = 15
+		local button_x = 240 - (button_width / 2)
+
+		-- Check if mouse is hovering over button
+		local button_hovered = mx and my and
+			mx >= button_x and mx <= button_x + button_width and
+			my >= button_y and my <= button_y + button_height
+
+		-- Draw button background
+		local button_bg = button_hovered and 5 or 0
+		rectfill(button_x, button_y, button_x + button_width, button_y + button_height, button_bg)
+
+		-- Draw button border
+		local button_border = button_hovered and 10 or 7
+		rect(button_x, button_y, button_x + button_width, button_y + button_height, button_border)
+
+		-- Draw button text
+		local button_text = "OK"
+		local button_text_x = button_x + (button_width - (#button_text * 4)) / 2
+		local button_text_y = button_y + (button_height - 6) / 2
+		print(button_text, button_text_x, button_text_y, 7)
+
+		-- Check for button click or keyboard input
+		local ok_clicked = ((mb & 1) == 1 and button_hovered) or keyp("return") or keyp("z")
+		if ok_clicked then
+			game_state = "menu"
+			mission_success_time = 0
+		end
+	end
+
+	-- Draw help panel overlay LAST (on top of absolutely everything)
+	if game_state == "playing" then
+		Missions.draw_help_panel(mx, my)
 	end
 end
