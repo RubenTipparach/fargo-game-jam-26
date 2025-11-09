@@ -905,9 +905,9 @@ function _init()
 
 	-- Initialize satellite position from config (can be updated dynamically later)
 	satellite_pos = {
-		x = Config.satellite.position.x,
-		y = Config.satellite.position.y,
-		z = Config.satellite.position.z
+		x = Config.missions.mission_1.satellite_start.x,
+		y = Config.missions.mission_1.satellite_start.y,
+		z = Config.missions.mission_1.satellite_start.z
 	}
 end
 
@@ -1143,8 +1143,8 @@ function _update()
 					local target_pos = nil
 					local target_ref = nil
 
-					if selected_target == "satellite" and model_satellite then
-						target_pos = Config.satellite.position
+					if selected_target == "satellite" and model_satellite and satellite_pos then
+						target_pos = satellite_pos  -- Use current rendered position, not config value
 						target_ref = Config.satellite
 					elseif selected_target == "planet" and model_planet then
 						target_pos = Config.planet.position
@@ -1317,8 +1317,8 @@ function _update()
 
 		-- Fire beam to satellite or planet
 		local target_pos = nil
-		if model_satellite then
-			target_pos = Config.satellite.position
+		if model_satellite and satellite_pos then
+			target_pos = satellite_pos  -- Use current rendered position
 		elseif model_planet then
 			target_pos = Config.planet.position
 		end
@@ -1334,8 +1334,8 @@ function _update()
 	if keyp("z") then
 		printh("Z KEY PRESSED - SPAWNING DEBUG SMOKE!")
 		local target_pos = nil
-		if model_satellite then
-			target_pos = Config.satellite.position
+		if model_satellite and satellite_pos then
+			target_pos = satellite_pos  -- Use current rendered position
 		elseif model_planet then
 			target_pos = Config.planet.position
 		end
