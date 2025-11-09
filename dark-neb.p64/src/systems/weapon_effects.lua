@@ -38,7 +38,7 @@ local SMOKE_CONFIG = {
 	growth_time = 0.2,  -- Time to reach max size (slower growth)
 	initial_scale = 0.5,
 	max_scale = 2.0,
-	spawn_interval = 0.15,  -- Time between smoke spawns when object is damaged (seconds)
+	spawn_interval = 0.35,  -- Time between smoke spawns when object is damaged (seconds)
 }
 
 -- Autonomous smoke spawners (objects that spawn smoke when damaged)
