@@ -1074,14 +1074,18 @@ function _update()
 		end
 	end
 
-	camera_heading_dir = {x= sin(camera.ry), z = cos(camera.ry)}
+	-- MUST BE HERE TO ALLOW DEBUG DRAW TO WORK
+	-- Sync camera_heading_dir from camera.ry at start of each frame (camera.ry is the actual camera position)
+	camera_heading_dir = {x = sin(camera.ry), z = cos(camera.ry)}
+	printh("SYNC: camera.ry = " .. flr(camera.ry*10000)/10000)
+
 	-- Smooth camera rotation (using direction vectors like the ship)
 	-- If satellite is targeted, aim camera at it instead of free rotation
 	if camera_locked_to_target then
+
+
 		local sat_pos = satellite_pos
 		local ship_pos = Config.ship.position
-
-	
 
 		-- Calculate target direction from ship to satellite (normalized)
 		local dx = sat_pos.x - ship_pos.x
@@ -1089,40 +1093,49 @@ function _update()
 		local direction = MathUtils.normalize(vec(dx, 0, dz))
 		camera_target_heading_dir = {x = direction.x, z = direction.z}
 
-		-- Rotate camera heading toward target using atan2 with shortest path
+		-- Rotate camera heading toward target using dot product for alignment
+		-- and 90-degree rotated direction for left/right determination
 		-- camera_heading_dir is the persistent source of truth
-		local current_angle = atan2(camera_heading_dir.x, camera_heading_dir.z)
-		local target_angle = atan2(camera_target_heading_dir.x, camera_target_heading_dir.z)
 
-		-- Calculate shortest angular difference (wraps around 0/1 boundary)
-		local angle_diff = target_angle - current_angle
-		if angle_diff > 0.5 then
-			angle_diff = angle_diff - 1
-		elseif angle_diff < -0.5 then
-			angle_diff = angle_diff + 1
-		end
+		-- Dot product: tells us how aligned we are (1 = perfectly aligned, -1 = opposite)
+		local dot = camera_heading_dir.x * camera_target_heading_dir.x +
+		            camera_heading_dir.z * camera_target_heading_dir.z
+
+		-- Rotate both directions 90 degrees for precise alignment check
+		-- Rotate counter-clockwise: (x, z) -> (-z, x)
+		local camera_left_dir = {x = -camera_heading_dir.z, z = camera_heading_dir.x}
+		local target_left_dir = {x = -camera_target_heading_dir.z, z = camera_target_heading_dir.x}
+
+		-- Dot product with left direction: tells us if we need to turn left (positive) or right (negative)
+		local left_dot = camera_left_dir.x * camera_target_heading_dir.x +
+		                 camera_left_dir.z * camera_target_heading_dir.z
+
+		-- Alignment check: dot product of both rotated vectors should be close to 0 when aligned
+		local alignment_check = camera_left_dir.x * target_left_dir.x +
+		                        camera_left_dir.z * target_left_dir.z
 
 		-- DEBUG OUTPUT
 		printh("=== CAMERA TARGET LOCK ===")
 		printh("target_dir: (" .. flr(camera_target_heading_dir.x*1000)/1000 .. "," .. flr(camera_target_heading_dir.z*1000)/1000 .. ")")
 		printh("current_dir: (" .. flr(camera_heading_dir.x*1000)/1000 .. "," .. flr(camera_heading_dir.z*1000)/1000 .. ")")
-		printh("current_angle: " .. flr(current_angle*10000)/10000)
-		printh("target_angle: " .. flr(target_angle*10000)/10000)
-		printh("angle_diff: " .. flr(angle_diff*10000)/10000)
+		printh("dot: " .. flr(dot*10000)/10000)
+		printh("alignment_check: " .. flr(alignment_check*10000)/10000)
+		printh("left_dot: " .. flr(left_dot*10000)/10000)
 
-		-- Only rotate if not already at target (tolerance: 0.0001 turns)
-		if abs(angle_diff) > 0.0001 then
-			-- Rotate toward target with smooth interpolation
-			local smoothing = 0.2  -- Smoothing factor - how much of the angle_diff to close each frame
-			local rotation_amount = angle_diff * smoothing  -- Move a fraction of the remaining distance
+		-- Only rotate if not already at target (alignment_check < 0.001 means perfectly aligned)
+		if abs(alignment_check) > 0.001 then
+			-- Determine rotation direction from left_dot sign
+			local turn_rate = 0.001--Config.camera.turn_rate  -- Turn rate in turns per frame
+			local rotation_amount = left_dot > 0 and turn_rate or -turn_rate
 
 			printh("rotation_amount: " .. flr(rotation_amount*10000)/10000)
 
 			-- Apply rotation to current angle
+			local current_angle = atan2(camera_heading_dir.x, camera_heading_dir.z)
 			local new_angle = current_angle + rotation_amount
 
 			-- Update camera.ry to match (for compatibility with camera system)
-			camera.ry = new_angle
+			camera.ry = rotation_amount +camera.ry
 
 			printh("new_angle: " .. flr(new_angle*10000)/10000)
 		end
