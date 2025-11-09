@@ -876,66 +876,31 @@ function RendererLit.draw_faces(all_faces)
 		-- Z is always 0 for screen-space vertices
 		vpool[2], vpool[8], vpool[14] = 0, 0, 0
 
-		-- Check if this face has dither opacity (fade out effect)
-		if f.dither_opacity and f.dither_opacity < 1.0 then
-			-- Apply dither fading by randomly skipping pixels based on opacity
-			-- Use a dither pattern seeded by screen position
-			local dither_threshold = f.dither_opacity
+		-- Check if this face has lighting data
+		if f.b1 then
+			-- Lit face: use cached brightness sprite
+			local b1, b2, b3 = f.b1, f.b2, f.b3
 
-			-- Render triangle with dither masking
-			-- We'll use a simple approach: skip rendering based on dither_threshold
-			-- Higher opacity = render more pixels, lower opacity = render fewer pixels
+			-- Calculate average brightness for this triangle (0-1)
+			local avg_b = (b1 + b2 + b3) / 3
 
-			-- For now, we can still render but at reduced opacity conceptually
-			-- Picotron doesn't have true alpha blending, so we use dithering:
-			-- Only render if random value < dither_threshold
-			if rnd() < dither_threshold then
-				if f.b1 then
-					-- Lit face with dither
-					local b1, b2, b3 = f.b1, f.b2, f.b3
-					local avg_b = (b1 + b2 + b3) / 3
-					local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
-					if brightness_level < 0 then brightness_level = 0 end
-					if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
-					local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
-					props.tex = brightness_sprite
-					props.tex2 = nil
-					RendererLit.textri(props, vpool, 270)
-				else
-					-- Unlit face with dither
-					props.tex = sprite_a
-					props.tex2 = nil
-					RendererLit.textri(props, vpool, 270)
-				end
-			end
+			-- Convert brightness to level (0-3)
+			local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
+			if brightness_level < 0 then brightness_level = 0 end
+			if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
+
+			-- Get cached brightness sprite
+			local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
+
+			-- Draw using brightness sprite
+			props.tex = brightness_sprite
+			props.tex2 = nil
+			RendererLit.textri(props, vpool, 270)
 		else
-			-- No dither opacity: render normally
-			-- Check if this face has lighting data
-			if f.b1 then
-				-- Lit face: use cached brightness sprite
-				local b1, b2, b3 = f.b1, f.b2, f.b3
-
-				-- Calculate average brightness for this triangle (0-1)
-				local avg_b = (b1 + b2 + b3) / 3
-
-				-- Convert brightness to level (0-3)
-				local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
-				if brightness_level < 0 then brightness_level = 0 end
-				if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
-
-				-- Get cached brightness sprite
-				local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
-
-				-- Draw using brightness sprite
-				props.tex = brightness_sprite
-				props.tex2 = nil
-				RendererLit.textri(props, vpool, 270)
-			else
-				-- Unlit face: render normally without lighting
-				props.tex = sprite_a
-				props.tex2 = nil
-				RendererLit.textri(props, vpool, 270)
-			end
+			-- Unlit face: render normally without lighting
+			props.tex = sprite_a
+			props.tex2 = nil
+			RendererLit.textri(props, vpool, 270)
 		end
 	end
 end

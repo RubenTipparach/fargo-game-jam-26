@@ -87,7 +87,7 @@ local death_time = 0
 -- Explosions
 local active_explosions = {}
 
--- Spawned spheres (persistent objects)
+-- Spawned quads/meshes (persistent objects)
 local spawned_spheres = {}
 
 -- Generate random stars for background
@@ -766,7 +766,7 @@ function create_billboard_quad(half_size, camera)
 end
 
 -- Create a billboard quad mesh (64x64 unlit, camera-facing)
-function create_quad(width, height, sprite_id, sprite_w, sprite_h, camera)
+function create_quad(width, height, sprite_id, sprite_w, sprite_h)
 	sprite_id = sprite_id or 1
 	sprite_w = sprite_w or 64
 	sprite_h = sprite_h or 64
@@ -797,18 +797,13 @@ function create_quad(width, height, sprite_id, sprite_w, sprite_h, camera)
 end
 
 -- Spawn a billboard quad at the given position (faces camera)
--- lifetime: optional duration in seconds before quad is removed (nil = infinite)
--- dither_enabled: optional boolean to enable dither fading based on lifetime
-function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h, camera_obj, lifetime, dither_enabled)
-	local quad_mesh = create_quad(width or 10, height or 10, sprite_id or 19, sprite_w, sprite_h, camera_obj or camera)
+function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h)
+	local quad_mesh = create_quad(width or 10, height or 10, sprite_id or 19, sprite_w, sprite_h)
 	local hw = (width or 10) / 2
 	local obj = {
 		x = x, y = y, z = z,
 		mesh = quad_mesh,
 		mesh_half_size = hw,
-		lifetime = lifetime,  -- Lifetime in seconds (nil = infinite)
-		age = 0,  -- Current age in seconds
-		dither_enabled = dither_enabled or false  -- Enable dither fading
 	}
 	add(spawned_spheres, obj)
 end
@@ -966,11 +961,10 @@ function _update()
 
 	-- X key to spawn quad
 	if keyp("x") then
-		printh("X KEY PRESSED!")
 		local sx = Config.ship.position.x
 		local sy = Config.ship.position.y
 		local sz = Config.ship.position.z
-		spawn_quad(sx, sy, sz, 10, 10, 19)
+		spawn_quad(sx, sy, sz, 5, 5, 19)
 	end
 
 	-- Smooth camera rotation (lerp towards target)
@@ -1144,26 +1138,6 @@ function _update()
 				table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
 			end
 
-			-- Spawn explosion quads with dither fading
-			-- Spawn multiple quads around the ship for a burst effect
-			local num_quads = 8
-			for i = 0, num_quads - 1 do
-				local angle = (i / num_quads) * 6.283185  -- 2π radians
-				local distance = 5
-				local offset_x = cos(angle) * distance
-				local offset_z = sin(angle) * distance
-				spawn_quad(
-					Config.ship.position.x + offset_x,
-					Config.ship.position.y,
-					Config.ship.position.z + offset_z,
-					10, 10,  -- width, height
-					Config.explosion.sprite_id or 19,  -- sprite_id
-					64, 64,  -- sprite dimensions
-					camera,  -- camera
-					Config.explosion.lifetime or 2.0,  -- lifetime in seconds
-					true  -- enable dither fading
-				)
-			end
 		end
 	end
 
@@ -1172,17 +1146,6 @@ function _update()
 		local explosion = active_explosions[i]
 		if not explosion:update(0.016) then  -- 60fps = ~0.016s per frame
 			table.remove(active_explosions, i)
-		end
-	end
-
-	-- Update spawned quads (age and remove expired ones)
-	for i = #spawned_spheres, 1, -1 do
-		local obj = spawned_spheres[i]
-		if obj.lifetime then
-			obj.age = obj.age + 0.016  -- Add one frame's worth of time (60fps)
-			if obj.age >= obj.lifetime then
-				table.remove(spawned_spheres, i)
-			end
 		end
 	end
 
@@ -1292,7 +1255,7 @@ function _draw()
 		end
 	end
 
-	-- Render all spawned objects (spheres or quads)
+	-- Render spawned quads
 	for _, obj in ipairs(spawned_spheres) do
 		-- Use custom mesh if provided (for quads), otherwise use model_sphere
 		local mesh = obj.mesh or model_sphere
@@ -1329,15 +1292,6 @@ function _draw()
 				-- Mark as unlit if mesh is marked as unlit
 				if mesh.unlit then
 					face.unlit = true
-				end
-				-- Apply dither-based opacity if quad has dither fading enabled and lifetime
-				if obj.dither_enabled and obj.lifetime then
-					-- Calculate remaining life ratio (1.0 = full lifetime, 0.0 = expired)
-					local remaining_ratio = 1.0 - (obj.age / obj.lifetime)
-					-- Clamp to 0-1 range
-					remaining_ratio = mid(0, remaining_ratio, 1)
-					-- Store dither value for use in draw_faces
-					face.dither_opacity = remaining_ratio
 				end
 				table.insert(all_faces, face)
 			end
@@ -1620,18 +1574,6 @@ function _draw()
 		local planet_pos = Config.planet.position
 		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
 
-		-- Draw bounding boxes for all spawned spheres
-		for _, sphere_pos in ipairs(spawned_spheres) do
-			local s = 0.5  -- half-size
-			local quad_min_x = sphere_pos.x - s
-			local quad_min_y = sphere_pos.y - s
-			local quad_min_z = sphere_pos.z - s
-			local quad_max_x = sphere_pos.x + s
-			local quad_max_y = sphere_pos.y + s
-			local quad_max_z = sphere_pos.z + s
-			draw_box_wireframe(quad_min_x, quad_min_y, quad_min_z,
-			                   quad_max_x, quad_max_y, quad_max_z, camera, 8)  -- Red box
-		end
 	end
 
 	-- Draw health bar at top left
