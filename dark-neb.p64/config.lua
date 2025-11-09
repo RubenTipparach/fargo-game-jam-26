@@ -7,7 +7,7 @@ local Config = {}
 Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
-Config.debug_physics = true  -- Show physics bounding boxes and collision wireframes
+Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
 Config.enable_x_button = false  -- Enable X button input (disabled for now)
 
 -- Star configuration
@@ -122,7 +122,7 @@ Config.particles = {
 
 -- Crosshair configuration
 Config.crosshair = {
-	max_distance = 4,  -- Only show crosshair if within this distance from ship on XZ plane
+	max_distance = 8,  -- Only show crosshair if within this distance from ship on XZ plane
 }
 
 -- Speed slider configuration

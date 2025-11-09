@@ -22,6 +22,7 @@ Renderer = include("src/engine/renderer.lua")
 RendererLit = include("src/engine/renderer_lit.lua")
 RenderFlat = include("src/engine/render_flat.lua")
 Quat = include("src/engine/quaternion.lua")
+MathUtils = include("src/engine/math_utils.lua")
 DebugRenderer = include("src/debug_renderer.lua")
 ExplosionRenderer = include("src/engine/explosion_renderer.lua")
 Explosion = include("src/particles/explosion.lua")
@@ -1079,6 +1080,11 @@ function _update()
 		local dx = sat_pos.x - ship_pos.x
 		local dz = sat_pos.z - ship_pos.z
 
+		-- Normalize direction vector (use normalize function from MathUtils)
+		local direction = MathUtils.normalize(vec(dx, 0, dz))
+		dx = direction.x
+		dz = direction.z
+
 		-- Calculate yaw (direction to satellite in XZ plane) - point camera at target
 		local sat_yaw = atan2(dx, dz)
 
@@ -1583,6 +1589,13 @@ function _draw()
 		local target_x = ship_x + target_heading_dir.x * arc_radius
 		local target_z = ship_z + target_heading_dir.z * arc_radius
 		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
+	end
+
+	-- Draw debug line from ship to satellite when targeted
+	if camera_locked_to_target and selected_target == "satellite" and model_satellite and satellite_pos then
+		local ship_pos = Config.ship.position
+		local sat_pos = satellite_pos
+		draw_line_3d(ship_pos.x, ship_pos.y, ship_pos.z, sat_pos.x, sat_pos.y, sat_pos.z, camera, 11)
 	end
 
 	-- Draw speed slider
