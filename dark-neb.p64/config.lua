@@ -8,6 +8,7 @@ Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = true  -- Always show CPU stats
 Config.debug_physics = true  -- Show physics bounding boxes and collision wireframes
+Config.enable_x_button = false  -- Enable X button input (disabled for now)
 
 -- Star configuration
 Config.stars = {
@@ -127,11 +128,18 @@ Config.crosshair = {
 -- Health and gameplay configuration
 Config.health = {
 	max_health = 100,
-	death_screen_delay = 2.0,  -- Seconds to show before death screen
+	death_screen_delay = 5.0,  -- Seconds before death screen appears
+	ship_disappear_time = 0.5,  -- Seconds before ship disappears after collision
 	health_bar_width = 150,
 	health_bar_height = 10,
 	health_bar_x = 10,  -- Top left X position
 	health_bar_y = 10,  -- Top left Y position
+}
+
+-- Battlefield configuration
+Config.battlefield = {
+	map_size = 512,  -- Map is 512x512 units
+	out_of_bounds_warning_time = 15.0,  -- Seconds before game ends after leaving
 }
 
 -- Explosion particle configuration

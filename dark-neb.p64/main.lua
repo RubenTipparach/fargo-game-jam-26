@@ -25,6 +25,10 @@ Quat = include("src/engine/quaternion.lua")
 DebugRenderer = include("src/debug_renderer.lua")
 ExplosionRenderer = include("src/engine/explosion_renderer.lua")
 Explosion = include("src/particles/explosion.lua")
+Panel = include("src/ui/panel.lua")
+Button = include("src/ui/button.lua")
+Minimap = include("src/minimap.lua")
+Menu = include("src/menu.lua")
 Config = include("config.lua")
 
 -- ============================================
@@ -83,9 +87,39 @@ local raycast_z = nil
 local current_health = Config.health.max_health
 local is_dead = false
 local death_time = 0
+local game_state = "menu"  -- "menu", "playing", "out_of_bounds", "game_over"
+local out_of_bounds_time = 0  -- Time spent out of bounds
+local is_out_of_bounds = false
 
 -- Explosions
 local active_explosions = {}
+
+-- UI Components for death screen
+local death_panel = Panel.new(300, 150, "YOU DIED")
+death_panel:set_colors(0, 7, 8)  -- Black bg, white border, red title
+local restart_button = Button.new(150, 100, 180, 30, "RESTART", function()
+	-- Reset game state
+	is_dead = false
+	current_health = Config.health.max_health
+	death_time = 0
+	Config.ship.position = {x = 0, y = 0, z = 0}
+	ship_speed = 0
+	target_ship_speed = 0
+	particle_trails = {}
+	active_explosions = {}
+	ship_heading_dir = {x = 0, z = 1}
+	target_heading_dir = {x = 0, z = 1}
+	game_state = "menu"
+end)
+
+-- UI Components for out-of-bounds warning
+local out_of_bounds_panel = Panel.new(280, 100, "LEAVING BATTLEFIELD")
+out_of_bounds_panel:set_colors(0, 7, 8)  -- Black bg, white border, red title
+local back_to_menu_button = Button.new(160, 115, 160, 30, "BACK TO MENU", function()
+	game_state = "menu"
+	out_of_bounds_time = 0
+	is_out_of_bounds = false
+end)
 
 -- Spawned spheres (persistent objects)
 local spawned_spheres = {}
@@ -852,8 +886,29 @@ function _init()
 end
 
 function _update()
-	-- Mouse orbit controls
+	-- Mouse input (used for menu and gameplay)
 	local mx, my, mb = mouse()
+
+	-- Handle menu input
+	if game_state == "menu" then
+		local input = {
+			select = keyp("return") or keyp("z"),
+		}
+		local mouse_click = (mb & 1) == 1
+
+		if Menu.update(input, mx, my, mouse_click) then
+			-- Campaign selected, start game
+			game_state = "playing"
+			is_dead = false
+			current_health = Config.health.max_health
+			death_time = 0
+			out_of_bounds_time = 0
+			is_out_of_bounds = false
+		end
+		return  -- Skip gameplay updates while in menu
+	end
+
+	-- Mouse orbit controls (only in gameplay)
 
 	-- Check if mouse is over slider
 	local over_slider = mx >= slider_x - 5 and mx <= slider_x + slider_width + 5 and
@@ -1027,8 +1082,8 @@ function _update()
 		end
 	end
 
-	-- Move ship in direction of heading based on speed
-	if ship_speed > 0.01 then
+	-- Move ship in direction of heading based on speed (only if alive)
+	if not is_dead and ship_speed > 0.01 then
 		local move_speed = ship_speed * Config.ship.max_speed * 0.1  -- Scale for reasonable movement
 		Config.ship.position.x = Config.ship.position.x + ship_heading_dir.x * move_speed
 		Config.ship.position.z = Config.ship.position.z + ship_heading_dir.z * move_speed
@@ -1046,8 +1101,8 @@ function _update()
 		end
 	end
 
-	-- Spawn new particle cubes around ship position
-	if ship_speed > 0.01 then
+	-- Spawn new particle cubes around ship position (only if alive)
+	if not is_dead and ship_speed > 0.01 then
 		local spawn_interval = Config.particles.spawn_rate
 		-- Store spawn timer in a way that persists
 		if not _spawn_timer then _spawn_timer = 0 end
@@ -1145,34 +1200,27 @@ function _update()
 			is_dead = true
 			death_time = 0
 
-			-- TODO: Spawn explosion at ship position using new Explosion object
-			-- Will be replaced with new particle explosion system
-			--[[ COMMENTED OUT - WILL BE REPLACED WITH NEW EXPLOSION SYSTEM
-			if Config.explosion.enabled then
-				table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
-			end
+		-- Spawn explosion at ship position
+		if Config.explosion.enabled then
+			table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+		end
 
-			-- Spawn explosion quads with dither fading
-			-- Spawn multiple quads around the ship for a burst effect
-			local num_quads = 8
-			for i = 0, num_quads - 1 do
-				local angle = (i / num_quads) * 6.283185  -- 2π radians
-				local distance = 5
-				local offset_x = cos(angle) * distance
-				local offset_z = sin(angle) * distance
-				spawn_quad(
-					Config.ship.position.x + offset_x,
-					Config.ship.position.y,
-					Config.ship.position.z + offset_z,
-					10, 10,  -- width, height
-					Config.explosion.sprite_id or 19,  -- sprite_id
-					64, 64,  -- sprite dimensions
-					camera,  -- camera
-					Config.explosion.lifetime or 2.0,  -- lifetime in seconds
-					true  -- enable dither fading
-				)
+		end
+	end
+
+	-- Check if ship is out of bounds (only during gameplay)
+	if game_state == "playing" and not is_dead then
+		if Minimap.is_out_of_bounds(Config.ship.position) then
+			if not is_out_of_bounds then
+				-- Just went out of bounds
+				is_out_of_bounds = true
+				out_of_bounds_time = 0
+				game_state = "out_of_bounds"
 			end
-			--]]
+		else
+			-- Back in bounds
+			is_out_of_bounds = false
+			game_state = "playing"
 		end
 	end
 
@@ -1308,8 +1356,8 @@ function _draw()
 		end
 	end
 
-	-- Render ship (from config)
-	if model_shippy then
+	-- Render ship (from config) - skip if ship has been dead for configured time
+	if model_shippy and (not is_dead or death_time < Config.health.ship_disappear_time) then
 		local ship_pos = Config.ship.position
 		local ship_rot = Config.ship.rotation
 		local ship_yaw = dir_to_angle(ship_heading_dir) + 0.25  -- Convert direction to angle, add 90° offset for model alignment
@@ -1414,12 +1462,12 @@ function _draw()
 		end
 	end
 
-	-- Draw heading compass (arc, heading lines) only when not at target
+	-- Draw heading compass (arc, heading lines) when ship is moving or turning
 	-- Calculate angle difference to see if we need to draw the compass
 	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
 
-	-- Only draw compass if there's a significant difference (tolerance 0.01 turns)
-	if angle_diff > 0.01 then
+	-- Draw compass if ship is moving or if there's a significant heading difference
+	if ship_speed > 0.01 or angle_diff > 0.01 then
 		local ship_x = Config.ship.position.x
 		local ship_z = Config.ship.position.z
 		local arc_radius = Config.ship.heading_arc_radius
@@ -1484,7 +1532,7 @@ function _draw()
 
 	-- Speed value text
 	local speed_display = flr(ship_speed * Config.ship.max_speed * 10) / 10
-	print("speed: " .. speed_display, slider_x - 30, slider_y + slider_height + 10, 7)
+	print("speed: " .. speed_display, slider_x - 30, slider_y + slider_height + 30, 7)
 
 	-- CPU usage (always visible if Config.show_cpu is true)
 	if Config.show_cpu then
@@ -1712,36 +1760,63 @@ function _draw()
 	local health_display = flr(current_health)
 	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
 
+	-- Draw minimap during gameplay
+	if game_state == "playing" then
+		Minimap.draw(Config.ship.position, Config.planet.position, Config.planet.radius)
+	end
+
 	-- Death screen (with 2 second delay before showing)
 	if is_dead then
 		death_time = death_time + (1 / 60)  -- Add one frame's worth of time
 
 		if death_time >= Config.health.death_screen_delay then
-			-- Semi-transparent black overlay
-			for y = 0, 135 do
-				line(0, y, 479, y, 0)
-			end
+			-- Get mouse position for button interaction
+			local mx, my, mb = mouse()
+			local mouse_clicked = (mb & 1) == 1
 
-			-- Death message (centered on screen)
-			print("YOU DIED", 210, 60, 8)  -- Red text
+			-- Update and draw death panel
+			death_panel:show()
+			death_panel:draw()
 
-			-- Restart prompt
-			print("Press R to restart", 180, 100, 7)  -- White text
-
-			-- Check for restart input
-			if btn(4) then  -- R button
-				-- Reset game state
-				is_dead = false
-				current_health = Config.health.max_health
-				death_time = 0
-				Config.ship.position = {x = 0, y = 0, z = 0}
-				ship_speed = 0
-				target_ship_speed = 0
-				particle_trails = {}
-				active_explosions = {}
-				ship_heading_dir = {x = 0, z = 1}
-				target_heading_dir = {x = 0, z = 1}
-			end
+			-- Update and draw restart button
+			restart_button:update(mx, my, mouse_clicked)
+			restart_button:draw()
 		end
+	end
+
+	-- Out of bounds warning screen
+	if is_out_of_bounds and game_state == "out_of_bounds" then
+		out_of_bounds_time = out_of_bounds_time + (1 / 60)
+
+		-- Get mouse position for button interaction
+		local mx, my, mb = mouse()
+		local mouse_clicked = (mb & 1) == 1
+
+		-- Draw out of bounds panel
+		out_of_bounds_panel:show()
+		out_of_bounds_panel:draw()
+
+		-- Calculate remaining time
+		local remaining_time = Config.battlefield.out_of_bounds_warning_time - out_of_bounds_time
+		remaining_time = mid(0, remaining_time, Config.battlefield.out_of_bounds_warning_time)
+
+		-- Draw countdown
+		print("Time remaining: " .. flr(remaining_time) .. "s", 165, 90, 11)
+
+		-- Update and draw back to menu button
+		back_to_menu_button:update(mx, my, mouse_clicked)
+		back_to_menu_button:draw()
+
+		-- End game if time runs out
+		if out_of_bounds_time >= Config.battlefield.out_of_bounds_warning_time then
+			game_state = "menu"
+			out_of_bounds_time = 0
+			is_out_of_bounds = false
+		end
+	end
+
+	-- Menu screen
+	if game_state == "menu" then
+		Menu.draw()
 	end
 end
