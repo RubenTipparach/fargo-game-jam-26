@@ -260,6 +260,11 @@ function WeaponEffects.spawn_explosion(pos, target)
 			target.current_health = 0
 		end
 
+		-- Log target health after damage
+		local target_name = target.id or "target"
+		local health_percent = (target.current_health / target.max_health) * 100
+		printh(target_name .. " took damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+
 		-- Spawn smoke if target is below 70% health (30% remaining)
 		local health_ratio = target.current_health / target.max_health
 		if health_ratio < 0.3 then
@@ -519,13 +524,9 @@ end
 
 -- Render smoke particles and add to face list (particle-based)
 function WeaponEffects.render_smoke(camera, all_faces)
-	if #smoke_particles > 0 then
-		printh("RENDER_SMOKE: " .. #smoke_particles .. " smoke particles active")
-	end
 	for _, smoke in ipairs(smoke_particles) do
 		local mesh = smoke:get_mesh_face(camera)
 		if mesh then
-			printh("  Smoke mesh generated, opacity=" .. smoke:get_opacity(smoke.age / smoke.lifetime))
 			for i = 1, #mesh.faces do
 				local face = mesh.faces[i]
 				local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]

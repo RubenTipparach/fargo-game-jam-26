@@ -967,7 +967,9 @@ function _init()
 				config = sat_config,
 				model = model_satellite,
 				is_destroyed = false,
-				health = sat_config.current_health
+				health = sat_config.current_health,
+			current_health = sat_config.current_health,  -- For damage system
+			max_health = sat_config.max_health  -- For damage system
 			}
 
 			table.insert(enemy_ships, enemy)
@@ -1474,13 +1476,6 @@ function _update()
 		end
 	end
 
-	-- DEBUG: Check target status before auto-fire
-	if current_selected_target then
-		printh("[F" .. _update_frame_counter .. "] DEBUG PRE-AUTOFIRE: current_selected_target = " .. current_selected_target.id)
-	else
-		printh("[F" .. _update_frame_counter .. "] DEBUG PRE-AUTOFIRE: current_selected_target = nil")
-	end
-
 	-- Handle auto-fire for weapons with auto-fire enabled
 	for i = 1, #Config.weapons do
 		local state = weapon_states[i]
@@ -1492,7 +1487,7 @@ function _update()
 
 			if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
 				target_pos = current_selected_target.position
-				target_ref = current_selected_target.config
+				target_ref = current_selected_target  -- Pass enemy object, not config
 			elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 				target_pos = Config.planet.position
 				target_ref = Config.planet
@@ -1509,12 +1504,6 @@ function _update()
 				state.charge = 0
 
 				printh("Auto-fire: Weapon " .. i .. " fired at target")
-			end
-		elseif state.auto_fire then
-			if not current_selected_target then
-				printh("DEBUG: Weapon " .. i .. " - NO TARGET (target still nil)")
-			else
-				printh("DEBUG: Weapon " .. i .. " - NOT CHARGED (charge=" .. flr(state.charge*1000)/1000 .. ")")
 			end
 		end
 	end
@@ -1862,28 +1851,20 @@ function _update()
 
 	-- Check if any enemy ship has been destroyed (health reaches 0)
 	for _, enemy in ipairs(enemy_ships) do
-		if not destroyed_enemies[enemy.id] and enemy.health <= 0 then
+		if not destroyed_enemies[enemy.id] and enemy.current_health <= 0 then
 			destroyed_enemies[enemy.id] = true
+			enemy.is_destroyed = true
 			printh("ENEMY DESTROYED: " .. enemy.id)
 
 			-- Despawn the autonomous smoke emitter for this enemy
 			WeaponEffects.unregister_smoke_spawner(enemy)
 
-			-- Spawn a large explosion at enemy position (like player ship destruction)
+			-- Spawn explosion at enemy position (same sprite as player ship)
 			local explosion = Explosion.new(
 				enemy.position.x,
 				enemy.position.y,
 				enemy.position.z,
-				{
-					quad_count = 1,
-					sprite_id = 17,
-					lifetime = 0.3,        -- Longer visible duration
-					initial_scale = 0.5,
-					max_scale = 2.5,       -- Smaller explosion for enemy ships
-					speed_up_time = 0.1,
-					slowdown_time = 0.2,
-					slow_growth_factor = 0.1,
-				}
+				Config.explosion
 			)
 			table.insert(active_explosions, explosion)
 
@@ -2390,17 +2371,54 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
-	-- Draw 2D selection indicators for satellites
+	-- Draw 2D selection boxes for satellites
 	for _, enemy in ipairs(enemy_ships) do
 		if enemy.type == "satellite" and model_satellite and enemy.position and not enemy.is_destroyed then
-			-- Choose color based on state: yellow if targeted or hovered, blue by default
-			local is_targeted = current_selected_target and current_selected_target == enemy
-			local is_hovered = hovered_target and hovered_target == enemy
-			local sat_box_color = (is_targeted or is_hovered) and enemy.config.bounding_box_color_hover or enemy.config.bounding_box_color_default
+			local sat_collider = enemy.config.collider
+			local sat_pos = enemy.position
 
-			-- Draw 2D bounding box around satellite on screen
-			local box_size = is_targeted and 25 or 20  -- Slightly larger when targeted
-			draw_2d_selection_box(enemy.position.x, enemy.position.y, enemy.position.z, camera, sat_box_color, box_size)
+			-- Project all 8 corners of the collider to screen space
+			local corners = {
+				{sat_pos.x - sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+				{sat_pos.x + sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+				{sat_pos.x - sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+				{sat_pos.x + sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+				{sat_pos.x - sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+				{sat_pos.x + sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+				{sat_pos.x - sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+				{sat_pos.x + sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+			}
+
+			-- Find min/max screen coordinates
+			local min_screen_x = 999
+			local max_screen_x = 0
+			local min_screen_y = 999
+			local max_screen_y = 0
+
+			for _, corner in ipairs(corners) do
+				local sx, sy = project_point(corner[1], corner[2], corner[3], camera)
+				if sx and sy then
+					min_screen_x = min(min_screen_x, sx)
+					max_screen_x = max(max_screen_x, sx)
+					min_screen_y = min(min_screen_y, sy)
+					max_screen_y = max(max_screen_y, sy)
+				end
+			end
+
+			-- Draw AABB outline if we have valid screen coordinates
+			if min_screen_x < 999 and max_screen_x > 0 and max_screen_y > 0 and min_screen_y < 128 then
+				local is_targeted = current_selected_target and current_selected_target == enemy
+				local is_hovered = hovered_target and hovered_target == enemy
+				local box_color = (is_targeted or is_hovered) and enemy.config.bounding_box_color_hover or enemy.config.bounding_box_color_default
+				local width = max_screen_x - min_screen_x
+				local height = max_screen_y - min_screen_y
+
+				-- Draw AABB outline (4 lines forming a rectangle)
+				line(min_screen_x, min_screen_y, max_screen_x, min_screen_y, box_color)
+				line(max_screen_x, min_screen_y, max_screen_x, max_screen_y, box_color)
+				line(max_screen_x, max_screen_y, min_screen_x, max_screen_y, box_color)
+				line(min_screen_x, max_screen_y, min_screen_x, min_screen_y, box_color)
+			end
 		end
 	end
 
@@ -2495,7 +2513,7 @@ function _draw()
 			rectfill(bar_x - 1, bar_y - 1, bar_x + bar_width + 1, bar_y + bar_height + 1, 0)  -- Dark border
 
 			-- Target health bar fill (green -> red based on health)
-			local target_health_percent = current_selected_target.config.current_health / current_selected_target.config.max_health
+			local target_health_percent = current_selected_target.current_health / current_selected_target.max_health
 			local target_fill_width = bar_width * target_health_percent
 			local target_health_color = target_health_percent > 0.5 and 11 or (target_health_percent > 0.25 and 10 or 8)
 			if target_fill_width > 0 then
