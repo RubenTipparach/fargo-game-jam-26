@@ -1749,11 +1749,37 @@ function _update()
 		satellite_destroyed = true
 		printh("SATELLITE DESTROYED!")
 
-		-- Spawn a large explosion at satellite position
-		WeaponEffects.spawn_explosion(
-			{x = Config.satellite.position.x, y = Config.satellite.position.y, z = Config.satellite.position.z},
-			nil  -- No target for this explosion (it's the death explosion)
+		-- Despawn the autonomous smoke emitter for the satellite
+		WeaponEffects.unregister_smoke_spawner(Config.satellite)
+
+		-- Spawn a large explosion at satellite position (like player ship destruction)
+		local sat_explosion = Explosion.new(
+			Config.satellite.position.x,
+			Config.satellite.position.y,
+			Config.satellite.position.z,
+			{
+				quad_count = 1,
+				sprite_id = 17,
+				lifetime = 0.5,        -- Longer visible duration
+				initial_scale = 1.0,
+				max_scale = 8.0,       -- Large explosion like player ship
+				speed_up_time = 0.15,
+				slowdown_time = 0.35,
+				slow_growth_factor = 0.15,
+			}
 		)
+		table.insert(active_explosions, sat_explosion)
+
+		-- Clear weapon targeting settings
+		selected_weapon = nil
+		selected_target = nil
+
+		-- Clear camera targeting settings
+		camera_locked_to_target = false
+		if camera_pitch_before_targeting then
+			camera.rx = camera_pitch_before_targeting
+			camera_pitch_before_targeting = nil
+		end
 	end
 
 	-- Update mouse button state for next frame's click detection
