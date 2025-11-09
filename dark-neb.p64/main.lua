@@ -87,6 +87,9 @@ local death_time = 0
 -- Explosions
 local active_explosions = {}
 
+-- Spawned spheres (persistent objects)
+local spawned_spheres = {}
+
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
 function generate_stars()
@@ -734,6 +737,41 @@ function create_sphere(radius, segments, stacks, sprite_id, sprite_w, sprite_h)
 	return {verts = verts, faces = faces, name = "sphere"}
 end
 
+-- Create a simple quad mesh (single rectangle, 64x64 unlit)
+function create_quad(width, height, sprite_id, sprite_w, sprite_h)
+	sprite_id = sprite_id or 1
+	sprite_w = sprite_w or 64
+	sprite_h = sprite_h or 64
+
+	-- Create 4 vertices for a quad (centered at origin)
+	local hw = width / 2
+	local hh = height / 2
+	local verts = {
+		vec(-hw, -hh, 0),  -- Bottom-left
+		vec(hw, -hh, 0),   -- Bottom-right
+		vec(hw, hh, 0),    -- Top-right
+		vec(-hw, hh, 0),   -- Top-left
+	}
+
+	-- Create 2 triangles to form the quad
+	local faces = {
+		-- First triangle (0, 1, 2)
+		{1, 2, 3, sprite_id,
+			vec(0, sprite_h), vec(sprite_w, sprite_h), vec(sprite_w, 0)},
+		-- Second triangle (0, 2, 3)
+		{1, 3, 4, sprite_id,
+			vec(0, sprite_h), vec(sprite_w, 0), vec(0, 0)},
+	}
+
+	return {verts = verts, faces = faces, name = "quad", unlit = true}
+end
+
+-- Spawn a quad at the given position
+function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h)
+	local quad_mesh = create_quad(width or 5, height or 5, sprite_id or 19, sprite_w, sprite_h)
+	add(spawned_spheres, {x = x, y = y, z = z, mesh = quad_mesh})
+end
+
 function _init()
 	-- Initialize color table for lit rendering
 	RendererLit.init_color_table()
@@ -884,6 +922,15 @@ function _update()
 
 	-- Clamp light pitch to reasonable range
 	light_pitch = mid(-1.5, light_pitch, 1.5)
+
+	-- X key to spawn quad
+	if keyp("x") then
+		printh("X KEY PRESSED!")
+		local sx = Config.ship.position.x
+		local sy = Config.ship.position.y
+		local sz = Config.ship.position.z
+		spawn_quad(sx, sy, sz, 5, 5, 19)
+	end
 
 	-- Smooth camera rotation (lerp towards target)
 	local smoothing = 0.2  -- Lower = smoother (0.1-0.3 range)
@@ -1172,6 +1219,38 @@ function _draw()
 		end
 	end
 
+	-- Render all spawned objects (spheres or quads)
+	for _, obj in ipairs(spawned_spheres) do
+		-- Use custom mesh if provided (for quads), otherwise use model_sphere
+		local mesh = obj.mesh or model_sphere
+
+		if mesh then
+			-- Render the mesh using the lit renderer
+			local obj_faces_rendered = RendererLit.render_mesh(
+				mesh.verts, mesh.faces, camera,
+				obj.x, obj.y, obj.z,
+				nil,  -- sprite override (use sprite from model)
+				light_dir,  -- light direction (directional light)
+				nil,  -- light radius (unused for directional)
+				light_brightness,  -- light brightness
+				ambient,  -- ambient light
+				false,  -- is_ground
+				0, 0, 0,  -- no rotation
+				Config.camera.render_distance
+			)
+
+			-- Add all rendered faces to the all_faces list
+			for i = 1, #obj_faces_rendered do
+				local face = obj_faces_rendered[i]
+				-- Mark as unlit if mesh is marked as unlit
+				if mesh.unlit then
+					face.unlit = true
+				end
+				table.insert(all_faces, face)
+			end
+		end
+	end
+
 	-- Render explosions and add to face list with proper depth sorting
 	ExplosionRenderer.render_explosions(active_explosions, camera, all_faces)
 
@@ -1447,6 +1526,19 @@ function _draw()
 		local planet_collider = Config.planet.collider
 		local planet_pos = Config.planet.position
 		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+
+		-- Draw bounding boxes for all spawned spheres
+		for _, sphere_pos in ipairs(spawned_spheres) do
+			local s = 0.5  -- half-size
+			local quad_min_x = sphere_pos.x - s
+			local quad_min_y = sphere_pos.y - s
+			local quad_min_z = sphere_pos.z - s
+			local quad_max_x = sphere_pos.x + s
+			local quad_max_y = sphere_pos.y + s
+			local quad_max_z = sphere_pos.z + s
+			draw_box_wireframe(quad_min_x, quad_min_y, quad_min_z,
+			                   quad_max_x, quad_max_y, quad_max_z, camera, 8)  -- Red box
+		end
 	end
 
 	-- Draw health bar at top left
