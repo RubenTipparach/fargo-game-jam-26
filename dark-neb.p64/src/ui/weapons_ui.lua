@@ -39,15 +39,16 @@ local WEAPONS_CONFIG = {
 -- @param camera: camera object for drawing firing arc
 -- @param draw_line_3d: function to draw 3D lines
 function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, config, mouse_x, mouse_y, ship_pos, ship_heading_dir, current_target, weapon_effects, camera, draw_line_3d)
-	local screen_height = 240
-
-	-- Position at lower-left corner
+	-- Position for weapons display
 	local base_x = WEAPONS_CONFIG.base_x
-	local y = screen_height - 50  -- 50 pixels from bottom
+	local y = 200  -- Standard position
+
+	-- Weapons section
+	y = y + 2
 
 	-- Draw "show arcs" toggle above weapons
 	local toggle_x = base_x
-	local toggle_y = y - WEAPONS_CONFIG.toggle_spacing
+	local toggle_y = y
 	local toggle_size = WEAPONS_CONFIG.toggle_size
 
 	-- Check if mouse is hovering over toggle
@@ -72,6 +73,8 @@ function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, c
 		-- Draw text
 		print(tooltip_text, tooltip_x, tooltip_y, WEAPONS_CONFIG.text_color)
 	end
+
+	y = y + toggle_size + 5
 
 	-- Use weapons from config
 	local weapons = config.weapons

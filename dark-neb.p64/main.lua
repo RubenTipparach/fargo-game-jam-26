@@ -1017,7 +1017,8 @@ function reload_mission_satellites()
 	if mission.satellites and #mission.satellites > 0 then
 		-- Load satellite model from first satellite config
 		local first_sat_config = mission.satellites[1]
-		model_satellite = load_obj(first_sat_config.model_file)
+		local load_obj_func = require("src.engine.obj_loader")
+		model_satellite = load_obj_func(first_sat_config.model_file)
 
 		if model_satellite then
 			printh("Satellite loaded: " .. #model_satellite.verts .. " vertices, " .. #model_satellite.faces .. " faces")
@@ -1242,8 +1243,26 @@ function _update()
 			target_ship_speed = Config.ship.speed
 			slider_speed_desired = Config.ship.speed
 
-			-- Reset mission camera tracking
+			-- Reset mission camera tracking first
 			Missions.init()  -- Initialize missions with all state reset
+
+			-- Get selected mission and set it
+			local selected_mission = Menu.get_selected_mission()
+			if selected_mission then
+				-- Load mission 2 if selected
+				if selected_mission.id == "mission_2" then
+					Missions.advance_mission()  -- Switch to mission 2
+					-- Disable all subsystems for Mission 2 tutorial
+					Config.energy.systems.impulse.allocated = 0
+					Config.energy.systems.weapons.allocated = 0
+					Config.energy.systems.shields.allocated = 0
+					Config.energy.systems.sensors.allocated = 0
+					Config.energy.systems.tractor_beam.allocated = 0
+				end
+			end
+
+			-- Load satellites for the selected mission
+			reload_mission_satellites()
 
 			-- Register autonomous smoke spawners for player and satellite
 			-- Player ship: spawn smoke when health < 30%
@@ -2084,11 +2103,21 @@ function _update()
 		-- Update dialog system
 		Missions.update_dialogs(1/60)  -- Assuming 60fps
 
-		-- Update mission 1 objectives
-		Missions.update_camera_objective(camera.ry, camera.rx)
-		local current_heading_angle = atan2(ship_heading_dir.x, ship_heading_dir.z)
-		Missions.update_rotation_objective(current_heading_angle)
-		Missions.update_movement_objective(ship_pos)
+		local current_mission = Missions.get_current_mission()
+
+		if current_mission.id == 1 then
+			-- Update mission 1 objectives
+			Missions.update_camera_objective(camera.ry, camera.rx)
+			local current_heading_angle = atan2(ship_heading_dir.x, ship_heading_dir.z)
+			Missions.update_rotation_objective(current_heading_angle)
+			Missions.update_movement_objective(ship_pos)
+		elseif current_mission.id == 2 then
+			-- Update mission 2 objectives
+			Missions.update_subsystems_objective(Config.energy)
+			Missions.update_targeting_objective(current_selected_target)
+			-- Count destroyed enemies for combat objective
+			Missions.update_combat_objective(#destroyed_enemies)
+		end
 
 		-- Check if current mission is complete
 		if Missions.check_mission_complete() and not Missions.is_mission_complete() then
@@ -2428,13 +2457,11 @@ function _draw()
 		print("mx: " .. mx .. " my: " .. my, 320 - 50, 10, 7)
 	end
 
-	-- Draw missions UI (during gameplay only)
+	-- Draw destination marker for current mission (mission UI now part of weapons panel)
 	if game_state == "playing" then
-		Missions.draw_ui()
-		-- Draw destination marker for current mission
-		local current_mission = Missions.get_current_mission()
-		if current_mission and current_mission.destination then
-			Missions.draw_destination_marker(current_mission.destination, camera, draw_line_3d)
+		local mission_dest = Missions.get_current_mission()
+		if mission_dest and mission_dest.destination then
+			Missions.draw_destination_marker(mission_dest.destination, camera, draw_line_3d)
 		end
 	end
 
@@ -2841,19 +2868,35 @@ function _draw()
 		print(title, title_x - 1, 50, 0)   -- Shadow
 		print(title, title_x, 49, 11)      -- Yellow text
 
-		-- Draw narrative text about space academy
-		local narrative_lines = {
-			"",
-			"Congratulations, cadet!",
-			"",
-			"Your instructors at the Academy were",
-			"deeply impressed by your performance.",
-			"You've successfully completed your",
-			"first year of training.",
-			"",
-			"However, be warned: the next year",
-			"will be far more challenging.",
-		}
+		-- Draw narrative text about space academy (varies by mission)
+		local current_mission = Missions.get_current_mission()
+		local narrative_lines = {}
+
+		if current_mission.id == 2 then
+			narrative_lines = {
+				"",
+				"Excellent work, cadet!",
+				"",
+				"You've graduated top of your class",
+				"with incredible fanfare from your",
+				"peers and teachers alike.",
+				"",
+				"You have a bright future ahead of you.",
+			}
+		else
+			narrative_lines = {
+				"",
+				"Congratulations, cadet!",
+				"",
+				"Your instructors at the Academy were",
+				"deeply impressed by your performance.",
+				"You've successfully completed your",
+				"first year of training.",
+				"",
+				"However, be warned: the next year",
+				"will be far more challenging.",
+			}
+		end
 
 		local text_y = 75
 		local text_color = 7  -- White

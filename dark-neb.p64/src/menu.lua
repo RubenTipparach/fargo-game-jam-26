@@ -94,6 +94,21 @@ function Menu.update(input, mouse_x, mouse_y, mouse_click)
 		end
 	end
 
+	-- Handle keyboard navigation (arrow keys)
+	if keyp("up") or keyp("w") then
+		Menu.selected_mission = Menu.selected_mission - 1
+		if Menu.selected_mission < 1 then
+			Menu.selected_mission = #Menu.missions
+		end
+	end
+
+	if keyp("down") or keyp("s") then
+		Menu.selected_mission = Menu.selected_mission + 1
+		if Menu.selected_mission > #Menu.missions then
+			Menu.selected_mission = 1
+		end
+	end
+
 	-- Handle keyboard selection (alternative input)
 	if input.select then
 		return true  -- Mission selected

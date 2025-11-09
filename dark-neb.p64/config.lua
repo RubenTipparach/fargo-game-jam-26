@@ -205,7 +205,7 @@ Config.weapons = {
 		name = "Photon Beam A",
 		energy_cost = 2,  -- Minimum energy required to fire
 		charge_time = 3,  -- Time in seconds to charge
-		range = 50,  -- Maximum firing distance
+		range = 80,  -- Maximum firing distance
 		arc_start = -60,  -- Left edge of firing arc (degrees)
 		arc_end = 30,  -- Right edge of firing arc (degrees)
 	},
@@ -213,7 +213,7 @@ Config.weapons = {
 		name = "Photon Beam B",
 		energy_cost = 4,  -- Minimum energy required to fire
 		charge_time = 3,  -- Time in seconds to charge
-		range = 50,  -- Maximum firing distance
+		range = 80,  -- Maximum firing distance
 		arc_start = -30,  -- Left edge of firing arc (degrees)
 		arc_end = 60,  -- Right edge of firing arc (degrees)
 	},
@@ -267,6 +267,46 @@ Config.energy = {
 	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar
 }
 
+-- Mission and Goal UI configuration
+Config.mission_ui = {
+	panel_x = 10,  -- Left side of panel
+	panel_y = 10,  -- Top of panel (below any top UI)
+	panel_width = 110,  -- Width of unified panel
+	panel_height = 225,  -- Total height of unified panel
+
+	-- Mission objective section
+	objective = {
+		title_color = 11,  -- Yellow for title
+		text_color = 7,  -- White for text
+		text_color_complete = 11,  -- Green when complete
+		title_spacing = 10,  -- Space after mission title
+		objective_spacing = 10,  -- Space for objective name
+		bar_height = 3,  -- Height of progress bar
+		bar_color = 10,  -- Yellow for progress
+		bar_color_complete = 11,  -- Green when complete
+		bar_empty_color = 1,  -- Dark for empty
+	},
+
+	-- Overall progress slider
+	progress_slider = {
+		label_y_offset = -18,  -- Distance above slider for "Progress" text
+		slider_y_offset = -10,  -- Distance from bottom of panel
+		slider_height = 3,  -- Height of slider bar
+		slider_color = 10,  -- Yellow for progress
+		slider_empty_color = 1,  -- Dark for empty
+	},
+
+	-- Separator between mission and weapons
+	separator = {
+		margin_top = 5,  -- Space above separator
+		margin_bottom = 3,  -- Space below separator
+		color = 7,  -- White line
+	},
+
+	-- Max name length before abbreviation
+	max_objective_name_length = 12,
+}
+
 -- Mission configurations
 Config.missions = {
 	-- Mission 1: Tutorial/Starting mission - no enemies, focus on controls
@@ -291,10 +331,11 @@ Config.missions = {
 		ship_start = {x = 0, y = 0, z = 0},
 		planet_start = {x = 50, y = 0, z = 0},
 		-- Satellite definitions for this mission
+		-- Both satellites positioned ~100m away from ship start (0, 0, 0)
 		satellites = {
 			{
 				id = "satellite_1",
-				position = {x = -30, y = 0, z = -40},
+				position = {x = -70.7, y = 0, z = -70.7},  -- ~100m away (diagonal)
 				rotation = {pitch = 0, yaw = 0, roll = 0},
 				model_file = "models/satelite.obj",
 				sprite_id = 2,
@@ -311,7 +352,7 @@ Config.missions = {
 			},
 			{
 				id = "satellite_2",
-				position = {x = 30, y = 0, z = 50},
+				position = {x = 70.7, y = 0, z = 70.7},  -- ~100m away (diagonal opposite)
 				rotation = {pitch = 0, yaw = 0, roll = 0},
 				model_file = "models/satelite.obj",
 				sprite_id = 2,

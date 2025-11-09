@@ -30,11 +30,16 @@ local shown_dialogs = {}  -- Track which dialogs have been shown
 local next_objective_index = 1  -- Track which objective to show next
 
 -- Help panel position
-local help_panel_x = 10  -- Top-left corner
+local help_panel_x = 180  -- Top-left corner
 local help_panel_y = 10
 
 -- Track if OK button was already clicked to prevent continuous activation
 local ok_button_clicked = false
+
+-- Mission 2 specific tracking
+local mission_2_subsystems_enabled = {impulse = false, weapons = false, shields = false, sensors = false}  -- Track which subsystems are enabled
+local mission_2_targeting_checked = false  -- Whether targeting has been initiated
+local mission_2_satellites_destroyed = 0  -- Count of destroyed satellites
 
 -- Mission 1: Movement and Camera Control
 -- Goals: Move camera, rotate ship, move to designated position
@@ -69,22 +74,30 @@ local MISSION_1 = {
 	destination_radius = 5,  -- How close to destination counts as completion
 }
 
--- Mission 2: Weapon Systems (previous mission)
+-- Mission 2: Subsystems & Combat
+-- Goals: Enable subsystems, learn targeting, destroy enemy ships
 local MISSION_2 = {
 	id = 2,
-	name = "Weapons & Targeting",
-	description = "Learn to target and fire weapons",
+	name = "Subsystems & Combat",
+	description = "Master your ship's subsystems and destroy enemy satellites",
 	objectives = {
 		{
-			id = "targeting",
-			name = "Target an enemy",
+			id = "subsystems",
+			name = "Enable all subsystems",
 			progress = 0,
 			target = 1.0,
 			completed = false,
 		},
 		{
-			id = "firing",
-			name = "Fire weapons",
+			id = "targeting",
+			name = "Target an enemy satellite",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+		{
+			id = "combat",
+			name = "Destroy both satellites",
 			progress = 0,
 			target = 1.0,
 			completed = false,
@@ -130,6 +143,11 @@ function Missions.init()
 			obj.completed = false
 		end
 	end
+
+	-- Reset Mission 2 specific tracking variables
+	mission_2_subsystems_enabled = {impulse = false, weapons = false, shields = false, sensors = false}
+	mission_2_targeting_checked = false
+	mission_2_satellites_destroyed = 0
 
 	-- Show first objective for mission 1
 	Missions.show_next_objective()
@@ -271,6 +289,98 @@ function Missions.update_movement_objective(ship_pos)
 	return false
 end
 
+-- Update subsystems objective for Mission 2
+-- Checks if all required subsystems are enabled
+function Missions.update_subsystems_objective(energy_system)
+	if current_mission ~= 2 then return end
+
+	local mission = MISSIONS[2]
+	local obj = mission.objectives[1]  -- Subsystems objective
+
+	-- Track which subsystems are enabled (have allocated energy > 0)
+	mission_2_subsystems_enabled.impulse = energy_system.systems.impulse.allocated > 0
+	mission_2_subsystems_enabled.weapons = energy_system.systems.weapons.allocated > 0
+	mission_2_subsystems_enabled.shields = energy_system.systems.shields.allocated > 0
+	mission_2_subsystems_enabled.sensors = energy_system.systems.sensors.allocated > 0
+
+	-- Check if all 4 subsystems are enabled
+	local all_enabled = mission_2_subsystems_enabled.impulse and
+		mission_2_subsystems_enabled.weapons and
+		mission_2_subsystems_enabled.shields and
+		mission_2_subsystems_enabled.sensors
+
+	-- Progress is based on how many subsystems are enabled (0-4)
+	local enabled_count = 0
+	if mission_2_subsystems_enabled.impulse then enabled_count = enabled_count + 1 end
+	if mission_2_subsystems_enabled.weapons then enabled_count = enabled_count + 1 end
+	if mission_2_subsystems_enabled.shields then enabled_count = enabled_count + 1 end
+	if mission_2_subsystems_enabled.sensors then enabled_count = enabled_count + 1 end
+
+	obj.progress = enabled_count / 4
+
+	-- Mark complete when all subsystems enabled
+	if all_enabled and not obj.completed then
+		obj.completed = true
+		mission_data[2].objectives["subsystems"].completed = true
+		if not shown_dialogs["subsystems_done"] then
+			shown_dialogs["subsystems_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update targeting objective for Mission 2
+-- Tracks if player has targeted an enemy
+function Missions.update_targeting_objective(current_target)
+	if current_mission ~= 2 then return end
+
+	local mission = MISSIONS[2]
+	local obj = mission.objectives[2]  -- Targeting objective
+
+	-- Check if a target is selected
+	if current_target and not mission_2_targeting_checked then
+		mission_2_targeting_checked = true
+	end
+
+	-- Progress is either 0 or 1 (targeting or not)
+	obj.progress = mission_2_targeting_checked and 1.0 or 0
+
+	-- Mark complete when target acquired
+	if mission_2_targeting_checked and not obj.completed then
+		obj.completed = true
+		mission_data[2].objectives["targeting"].completed = true
+		if not shown_dialogs["targeting_done"] then
+			shown_dialogs["targeting_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update combat objective for Mission 2
+-- Tracks destroyed satellites
+function Missions.update_combat_objective(satellites_destroyed)
+	if current_mission ~= 2 then return end
+
+	local mission = MISSIONS[2]
+	local obj = mission.objectives[3]  -- Combat objective
+
+	-- Update satellite destruction count
+	mission_2_satellites_destroyed = satellites_destroyed or 0
+
+	-- Progress based on satellites destroyed (0-2)
+	obj.progress = mission_2_satellites_destroyed / 2
+
+	-- Mission complete when both satellites destroyed
+	if mission_2_satellites_destroyed >= 2 and not obj.completed then
+		obj.completed = true
+		mission_data[2].objectives["combat"].completed = true
+		if not shown_dialogs["combat_done"] then
+			shown_dialogs["combat_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
 -- Show the next objective in sequence
 function Missions.show_next_objective()
 	local mission = Missions.get_current_mission()
@@ -283,12 +393,24 @@ function Missions.show_next_objective()
 
 			-- Show instruction for this objective
 			local instruction_text = ""
-			if i == 1 then
-				instruction_text = "OBJECTIVE 1: " .. obj.name .. "\n\nLeft click+drag:\nRotate camera"
-			elseif i == 2 then
-				instruction_text = "OBJECTIVE 2: " .. obj.name .. "\n\nRight click+drag:\nRotate ship"
-			elseif i == 3 then
-				instruction_text = "OBJECTIVE 3: " .. obj.name .. "\n\nDrag the speed bar on the right:\nMove to green cube"
+			if mission.id == 1 then
+				-- Mission 1 instructions
+				if i == 1 then
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\n\nLeft click+drag:\nRotate camera"
+				elseif i == 2 then
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\n\nRight click+drag:\nRotate ship"
+				elseif i == 3 then
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\n\nDrag the speed bar on the right:\nMove to green cube"
+				end
+			elseif mission.id == 2 then
+				-- Mission 2 instructions
+				if i == 1 then
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\n\nClick on energy bars\nto allocate energy\nto subsystems"
+				elseif i == 2 then
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\n\nRight click on\na satellite to\ntarget it"
+				elseif i == 3 then
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\n\nMove into range\nand firing arc.\nFire weapons to\ndestroy both\nsatellites"
+				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
 			end
@@ -301,8 +423,12 @@ function Missions.show_next_objective()
 		end
 	end
 
-	-- All objectives complete
-	dialog_text = "Mission Success!!!\n\nClick OK to return\nto main menu"
+	-- All objectives complete - show mission-specific success message
+	if current_mission == 2 then
+		dialog_text = "Mission Success!!!\n\nYou've graduated top\nof your class with\nincredible fanfare.\nYou have a bright\nfuture ahead!"
+	else
+		dialog_text = "Mission Success!!!\n\nClick OK to return\nto main menu"
+	end
 	dialog_visible = true
 	dialog_duration = 999  -- Wait for player to click OK
 end
@@ -364,58 +490,101 @@ function Missions.advance_mission()
 	return false
 end
 
--- Draw mission UI (HUD display)
-function Missions.draw_ui()
-	local mission = Missions.get_current_mission()
+-- -- Draw mission UI (HUD display) - consolidated panel in lower-left
+-- function Missions.draw_ui()
+-- 	local mission = Missions.get_current_mission()
 
-	if not mission then return end
+-- 	if not mission then return end
 
-	local start_x = 240  -- Center-right of screen
-	local start_y = 10
-	local line_height = 12
+-- 	-- Panel position in lower-left area
+-- 	local panel_x = 10
+-- 	local panel_y = 110
+-- 	local panel_width = 200
+-- 	local panel_height = 65
 
-	-- Mission title
-	print("MISSION " .. mission.id .. ": " .. mission.name, start_x, start_y, 11)
+-- 	-- Draw panel background
+-- 	rectfill(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 0)
 
-	-- Only show current objective progress bar (hide irrelevant objectives)
-	local y = start_y + line_height + 5
-	local current_obj = mission.objectives[next_objective_index]
+-- 	-- Draw panel border
+-- 	rect(panel_x, panel_y, panel_x + panel_width, panel_y + panel_height, 7)
 
-	if current_obj then
-		-- Objective name
-		local name_color = current_obj.completed and 11 or 7  -- Green if complete, white otherwise
-		print(current_obj.name, start_x, y, name_color)
+-- 	-- Draw title
+-- 	local title = "MISSION " .. mission.id
+-- 	print(title, panel_x + 2, panel_y + 2, 11)
 
-		-- Progress bar background
-		local bar_width = 80
-		local bar_height = 4
-		rectfill(start_x, y + line_height, start_x + bar_width, y + line_height + bar_height, 1)  -- Dark background
+-- 	-- Draw only current objective with progress bar
+-- 	local current_obj = mission.objectives[next_objective_index]
 
-		-- Progress bar fill
-		local fill_width = bar_width * current_obj.progress
-		if fill_width > 0 then
-			local bar_color = current_obj.completed and 11 or 10  -- Green if complete, yellow otherwise
-			rectfill(start_x, y + line_height, start_x + fill_width, y + line_height + bar_height, bar_color)
-		end
+-- 	if current_obj then
+-- 		-- Objective number and name (abbreviated if needed)
+-- 		local obj_name = current_obj.name
+-- 		if #obj_name > 12 then
+-- 			obj_name = string.sub(obj_name, 1, 12) .. "."
+-- 		end
+-- 		local name_color = current_obj.completed and 11 or 7
+-- 		print(next_objective_index .. ". " .. obj_name, panel_x + 2, panel_y + 16, name_color)
 
-		-- Progress bar border
-		rect(start_x, y + line_height, start_x + bar_width, y + line_height + bar_height, 7)
-	end
+-- 		-- Progress bar
+-- 		local bar_width = panel_width - 4
+-- 		local bar_height = 4
+-- 		local bar_y = panel_y + 26
 
-	-- Draw destination marker for Mission 1 (only if movement objective not complete)
-	if mission.id == 1 then
-		local movement_obj = mission.objectives[3]  -- Movement is the 3rd objective
-		if movement_obj and not movement_obj.completed then
-			Missions.draw_destination_marker(mission.destination)
-		end
-	end
-end
+-- 		-- Progress bar background
+-- 		rectfill(panel_x + 2, bar_y, panel_x + 2 + bar_width, bar_y + bar_height, 1)
+
+-- 		-- Progress bar fill
+-- 		local fill_width = bar_width * current_obj.progress
+-- 		if fill_width > 0 then
+-- 			local bar_color = current_obj.completed and 11 or 10
+-- 			rectfill(panel_x + 2, bar_y, panel_x + 2 + fill_width, bar_y + bar_height, bar_color)
+-- 		end
+
+-- 		-- Progress bar border
+-- 		rect(panel_x + 2, bar_y, panel_x + 2 + bar_width, bar_y + bar_height, 7)
+-- 	end
+
+-- 	-- Draw slider at bottom of panel
+-- 	local slider_y = panel_y + panel_height - 12
+-- 	local slider_x = panel_x + 2
+-- 	local slider_width = panel_width - 4
+
+-- 	print("Progress", slider_x, slider_y - 8, 7)
+
+-- 	-- Slider background
+-- 	rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + 3, 1)
+
+-- 	-- Calculate overall mission progress (average of all objectives)
+-- 	local total_progress = 0
+-- 	for _, obj in ipairs(mission.objectives) do
+-- 		total_progress = total_progress + obj.progress
+-- 	end
+-- 	total_progress = total_progress / #mission.objectives
+
+-- 	-- Slider fill
+-- 	local slider_fill = slider_width * total_progress
+-- 	if slider_fill > 0 then
+-- 		rectfill(slider_x, slider_y, slider_x + slider_fill, slider_y + 3, 10)
+-- 	end
+
+-- 	-- Slider border
+-- 	rect(slider_x, slider_y, slider_x + slider_width, slider_y + 3, 7)
+
+-- 	-- Draw destination marker for Mission 1 (only if movement objective not complete)
+-- 	if mission.id == 1 then
+-- 		local movement_obj = mission.objectives[3]  -- Movement is the 3rd objective
+-- 		if movement_obj and not movement_obj.completed then
+-- 			Missions.draw_destination_marker(mission.destination)
+-- 		end
+-- 	end
+-- end
 
 -- Draw help panel overlay (call this LAST, after all other UI)
 -- @param mouse_x, mouse_y: optional mouse coordinates for button hover detection
 function Missions.draw_help_panel(mouse_x, mouse_y)
-	-- Always draw the panel with current objective text
-	Missions.draw_dialog(dialog_text, mouse_x, mouse_y)
+	-- Only draw dialog when it's visible (instruction text or mission success message)
+	if dialog_visible then
+		Missions.draw_dialog(dialog_text, mouse_x, mouse_y)
+	end
 end
 
 -- Draw UI pointers for tutorials (e.g., highlight weapons UI, buttons)
@@ -550,6 +719,37 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 		local text_color = button_hovered and 0 or 7
 		print("OK", button_x + 12, button_y + 3, text_color)
 	end
+
+	-- Draw overall mission progress slider below dialog panel
+	local mission = Missions.get_current_mission()
+	if mission then
+		local slider_x = panel_x
+		local slider_y = panel_y + panel_height + 8
+		local slider_width = panel_width
+		local slider_height = 3
+
+		-- Calculate overall mission progress (average of all objectives)
+		local total_progress = 0
+		for _, obj in ipairs(mission.objectives) do
+			total_progress = total_progress + obj.progress
+		end
+		total_progress = total_progress / #mission.objectives
+
+		-- Draw progress label
+		print("Overall Progress", slider_x, slider_y - 8, 7)
+
+		-- Slider background
+		rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 1)
+
+		-- Slider fill
+		local slider_fill = slider_width * total_progress
+		if slider_fill > 0 then
+			rectfill(slider_x, slider_y, slider_x + slider_fill, slider_y + slider_height, 10)
+		end
+
+		-- Slider border
+		rect(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 7)
+	end
 end
 
 -- Draw destination cube in 3D world
@@ -607,5 +807,15 @@ end
 function Missions.get_data(mission_id)
 	return mission_data[mission_id]
 end
+
+-- Get next objective index
+function Missions.get_next_objective_index()
+	return next_objective_index
+end
+
+-- Exposed update functions for Mission 2 (called from main.lua)
+Missions.update_subsystems_objective = Missions.update_subsystems_objective
+Missions.update_targeting_objective = Missions.update_targeting_objective
+Missions.update_combat_objective = Missions.update_combat_objective
 
 return Missions
