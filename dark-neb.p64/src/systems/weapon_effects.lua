@@ -4,11 +4,15 @@
 
 local WeaponEffects = {}
 
+-- Load particle systems
+local Explosion = require("src.particles.explosion")
+local Smoke = require("src.particles.smoke")
+
 -- Active beams
 local beams = {}
--- Active explosions
+-- Active explosions (particle-based)
 local explosions = {}
--- Active smoke particles
+-- Active smoke particles (particle-based)
 local smoke_particles = {}
 
 -- Beam configuration
@@ -30,11 +34,16 @@ local EXPLOSION_CONFIG = {
 local SMOKE_CONFIG = {
 	sprite_id = 18,  -- Smoke sprite
 	max_particles = 4,
-	growth_time = 0.3,  -- Time to reach max size
-	fade_time = 0.7,  -- Time to fade out
+	lifetime = 2.0,  -- Longer smoke duration for more persistent effect
+	growth_time = 0.2,  -- Time to reach max size (slower growth)
 	initial_scale = 0.5,
 	max_scale = 2.0,
+	spawn_interval = 0.15,  -- Time between smoke spawns when object is damaged (seconds)
 }
+
+-- Autonomous smoke spawners (objects that spawn smoke when damaged)
+-- Each entry: {object=ref, health_threshold=0.3, last_spawn_time=0, spawn_pos_fn=function}
+local smoke_spawners = {}
 
 -- Beam object - simple billboard at target position
 local Beam = {}
@@ -118,19 +127,31 @@ end
 -- @param pos: {x, y, z} position
 -- @param target: reference to target object (satellite/planet config table)
 function WeaponEffects.spawn_explosion(pos, target)
-	local explosion = {
-		pos = {x = pos.x, y = pos.y, z = pos.z},
+	-- Create particle-based explosion using the Explosion class
+	local explosion = Explosion.new(pos.x, pos.y, pos.z, {
+		quad_count = 1,
+		sprite_id = EXPLOSION_CONFIG.sprite_id,
 		lifetime = EXPLOSION_CONFIG.lifetime,
-		age = 0,
-		target = target,  -- Reference to damaged target
-	}
+		initial_scale = 0.5,
+		max_scale = 3.0,
+		speed_up_time = 0.1,
+		slowdown_time = 0.2,
+		slow_growth_factor = 0.1,
+	})
+
 	table.insert(explosions, explosion)
 
 	-- Apply damage to target if it exists
-	if target and target.current_health then
+	if target and target.current_health and target.max_health then
 		target.current_health = target.current_health - EXPLOSION_CONFIG.damage
 		if target.current_health < 0 then
 			target.current_health = 0
+		end
+
+		-- Spawn smoke if target is below 70% health (30% remaining)
+		local health_ratio = target.current_health / target.max_health
+		if health_ratio < 0.3 then
+			WeaponEffects.spawn_smoke(pos)
 		end
 	end
 
@@ -143,16 +164,36 @@ end
 function WeaponEffects.spawn_smoke(pos, velocity)
 	-- Only spawn if under max limit
 	if #smoke_particles >= SMOKE_CONFIG.max_particles then
+		printh("SMOKE SPAWN BLOCKED: max particles reached (" .. #smoke_particles .. "/" .. SMOKE_CONFIG.max_particles .. ")")
 		return nil
 	end
 
-	local smoke = {
-		pos = {x = pos.x, y = pos.y, z = pos.z},
-		velocity = velocity or {x = 0, y = 0.5, z = 0},
-		lifetime = SMOKE_CONFIG.growth_time + SMOKE_CONFIG.fade_time,
-		age = 0,
-		scale = SMOKE_CONFIG.initial_scale,
+	-- Add random offset to spawn position to avoid perfect stacking
+	local spawn_offset = 0.5
+	local pos_x = pos.x + (rnd(spawn_offset * 2) - spawn_offset)
+	local pos_y = pos.y + (rnd(spawn_offset * 2) - spawn_offset)
+	local pos_z = pos.z + (rnd(spawn_offset * 2) - spawn_offset)
+
+	-- Default velocity with random horizontal spread - faster upward movement
+	local vel = velocity or {
+		x = (rnd(0.4) - 0.2),  -- Random horizontal X movement (-0.2 to 0.2)
+		y = 0.8 + rnd(0.3),    -- Faster upward movement with variation (0.8 to 1.1)
+		z = (rnd(0.4) - 0.2),  -- Random horizontal Z movement (-0.2 to 0.2)
 	}
+
+	-- Randomize smoke size by about 20% (0.8 to 1.2 scale multiplier)
+	local size_variance = 0.8 + rnd(0.4)
+
+	local smoke = Smoke.new(pos_x, pos_y, pos_z, {
+		sprite_id = SMOKE_CONFIG.sprite_id,
+		lifetime = SMOKE_CONFIG.lifetime,
+		initial_scale = SMOKE_CONFIG.initial_scale * size_variance * 0.8,  -- Shrink 20% overall and add variance
+		max_scale = SMOKE_CONFIG.max_scale * size_variance * 0.8,           -- Shrink 20% overall and add variance
+		growth_time = SMOKE_CONFIG.growth_time,
+		velocity = vel,
+	})
+
+	printh("SMOKE SPAWNED: pos=(" .. pos_x .. "," .. pos_y .. "," .. pos_z .. ") total=" .. (#smoke_particles + 1))
 	table.insert(smoke_particles, smoke)
 	return smoke
 end
@@ -168,40 +209,24 @@ function WeaponEffects.update(delta)
 		end
 	end
 
-	-- Update explosions
+	-- Update explosions (particle-based)
 	for i = #explosions, 1, -1 do
 		local exp = explosions[i]
-		exp.age = exp.age + delta
-		if exp.age >= exp.lifetime then
+		if not exp:update(delta) then
 			table.remove(explosions, i)
 		end
 	end
 
-	-- Update smoke particles
+	-- Update smoke particles (particle-based)
 	for i = #smoke_particles, 1, -1 do
 		local smoke = smoke_particles[i]
-		smoke.age = smoke.age + delta
-
-		-- Update position
-		smoke.pos.x = smoke.pos.x + smoke.velocity.x * delta
-		smoke.pos.y = smoke.pos.y + smoke.velocity.y * delta
-		smoke.pos.z = smoke.pos.z + smoke.velocity.z * delta
-
-		-- Update scale
-		if smoke.age < SMOKE_CONFIG.growth_time then
-			-- Growth phase
-			local t = smoke.age / SMOKE_CONFIG.growth_time
-			smoke.scale = SMOKE_CONFIG.initial_scale + (SMOKE_CONFIG.max_scale - SMOKE_CONFIG.initial_scale) * t
-		else
-			-- Fade phase
-			local t = (smoke.age - SMOKE_CONFIG.growth_time) / SMOKE_CONFIG.fade_time
-			smoke.scale = SMOKE_CONFIG.max_scale * (1 - t)
-		end
-
-		if smoke.age >= smoke.lifetime then
+		if not smoke:update(delta) then
 			table.remove(smoke_particles, i)
 		end
 	end
+
+	-- Update autonomous smoke spawners (spawns smoke on damaged objects)
+	WeaponEffects.update_smoke_spawners(delta)
 end
 
 -- Build simple billboard quad for a beam at target position
@@ -288,13 +313,10 @@ end
 
 -- Render beams and add to face list (same pattern as ExplosionRenderer)
 function WeaponEffects.render_beams(camera, all_faces)
-	printh("RENDER_BEAMS: " .. #beams .. " beams active")
 	for _, beam in ipairs(beams) do
-		printh("  Beam: active=" .. tostring(beam.active))
 		if beam.active then
 			local mesh = beam:get_mesh_face(camera)
 			if mesh then
-				printh("    Got mesh with " .. #mesh.faces .. " faces")
 				for i = 1, #mesh.faces do
 					local face = mesh.faces[i]
 					local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
@@ -326,13 +348,97 @@ function WeaponEffects.render_beams(camera, all_faces)
 							fog = 0,
 							unlit = true
 						})
-						printh("    Added face " .. i)
-					else
-						printh("    Face " .. i .. " culled (p1=" .. tostring(p1 ~= nil) .. " p2=" .. tostring(p2 ~= nil) .. " p3=" .. tostring(p3 ~= nil) .. ")")
 					end
 				end
-			else
-				printh("    No mesh returned")
+			end
+		end
+	end
+end
+
+-- Render explosions and add to face list (particle-based)
+function WeaponEffects.render_explosions(camera, all_faces)
+	for _, explosion in ipairs(explosions) do
+		local mesh = explosion:get_mesh_face(camera)
+		if mesh then
+			for i = 1, #mesh.faces do
+				local face = mesh.faces[i]
+				local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
+				local v1 = mesh.verts[v1_idx]
+				local v2 = mesh.verts[v2_idx]
+				local v3 = mesh.verts[v3_idx]
+
+				-- Convert to world coordinates
+				local w1 = {x = v1.x + mesh.x, y = v1.y + mesh.y, z = v1.z + mesh.z}
+				local w2 = {x = v2.x + mesh.x, y = v2.y + mesh.y, z = v2.z + mesh.z}
+				local w3 = {x = v3.x + mesh.x, y = v3.y + mesh.y, z = v3.z + mesh.z}
+
+				-- Project all vertices
+				local p1 = project_vertex(w1, camera)
+				local p2 = project_vertex(w2, camera)
+				local p3 = project_vertex(w3, camera)
+
+				-- Only add face if all vertices are in front of camera
+				if p1 and p2 and p3 then
+					-- Calculate average depth with slight bias
+					local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333 - 10
+
+					table.insert(all_faces, {
+						face = {v1_idx, v2_idx, v3_idx, face[4], face[5], face[6], face[7]},
+						depth = avg_depth,
+						p1 = p1,
+						p2 = p2,
+						p3 = p3,
+						unlit = true,
+						explosion_opacity = mesh.opacity
+					})
+				end
+			end
+		end
+	end
+end
+
+-- Render smoke particles and add to face list (particle-based)
+function WeaponEffects.render_smoke(camera, all_faces)
+	if #smoke_particles > 0 then
+		printh("RENDER_SMOKE: " .. #smoke_particles .. " smoke particles active")
+	end
+	for _, smoke in ipairs(smoke_particles) do
+		local mesh = smoke:get_mesh_face(camera)
+		if mesh then
+			printh("  Smoke mesh generated, opacity=" .. smoke:get_opacity(smoke.age / smoke.lifetime))
+			for i = 1, #mesh.faces do
+				local face = mesh.faces[i]
+				local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
+				local v1 = mesh.verts[v1_idx]
+				local v2 = mesh.verts[v2_idx]
+				local v3 = mesh.verts[v3_idx]
+
+				-- Convert to world coordinates
+				local w1 = {x = v1.x + mesh.x, y = v1.y + mesh.y, z = v1.z + mesh.z}
+				local w2 = {x = v2.x + mesh.x, y = v2.y + mesh.y, z = v2.z + mesh.z}
+				local w3 = {x = v3.x + mesh.x, y = v3.y + mesh.y, z = v3.z + mesh.z}
+
+				-- Project all vertices
+				local p1 = project_vertex(w1, camera)
+				local p2 = project_vertex(w2, camera)
+				local p3 = project_vertex(w3, camera)
+
+				-- Only add face if all vertices are in front of camera
+				if p1 and p2 and p3 then
+					-- Calculate average depth with slight bias
+					local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333 - 5
+
+					table.insert(all_faces, {
+						face = {v1_idx, v2_idx, v3_idx, face[4], face[5], face[6], face[7]},
+						depth = avg_depth,
+						p1 = p1,
+						p2 = p2,
+						p3 = p3,
+						dither_opacity = 1.0 - face.fog,  -- Convert fog to opacity for renderer's dither system
+						unlit = true,
+						smoke_opacity = mesh.opacity
+					})
+				end
 			end
 		end
 	end
@@ -342,35 +448,7 @@ end
 -- @param camera: camera object with view matrix
 -- @param utilities: object containing draw_line_3d, project_to_screen, and Renderer for drawing 3D quads
 function WeaponEffects.draw(camera, utilities)
-	-- Beams are now added to the face queue in main.lua before sorting
-
-	-- Draw explosions
-	for _, exp in ipairs(explosions) do
-		-- Project to screen and draw sprite
-		local screen_x, screen_y = utilities.project_to_screen(exp.pos.x, exp.pos.y, exp.pos.z, camera)
-		if screen_x and screen_y then
-			-- Draw explosion sprite with fade
-			local fade = 1 - (exp.age / exp.lifetime)
-			spr(EXPLOSION_CONFIG.sprite_id, flr(screen_x) - 4, flr(screen_y) - 4, 1, 1, 0, 0)
-		end
-	end
-
-	-- Draw smoke particles
-	for _, smoke in ipairs(smoke_particles) do
-		-- Project to screen
-		local screen_x, screen_y = utilities.project_to_screen(smoke.pos.x, smoke.pos.y, smoke.pos.z, camera)
-		if screen_x and screen_y then
-			-- Calculate fade
-			local fade = 1
-			if smoke.age > SMOKE_CONFIG.growth_time then
-				fade = 1 - ((smoke.age - SMOKE_CONFIG.growth_time) / SMOKE_CONFIG.fade_time)
-			end
-
-			-- Draw smoke sprite scaled
-			local scale = smoke.scale
-			spr(SMOKE_CONFIG.sprite_id, flr(screen_x) - scale * 4, flr(screen_y) - scale * 4, scale, scale, 0, 0)
-		end
-	end
+	-- Beams, explosions, and smoke are now added to the face queue in main.lua before sorting
 end
 
 -- Get all beams
@@ -393,6 +471,79 @@ function WeaponEffects.clear()
 	beams = {}
 	explosions = {}
 	smoke_particles = {}
+	smoke_spawners = {}
+end
+
+-- Register an object for autonomous smoke spawning when damaged
+-- @param object: object with current_health and max_health properties
+-- @param health_threshold: spawn smoke when health ratio is below this (default 0.3 = 30%)
+-- @param spawn_pos_fn: function(object) that returns {x, y, z} spawn position
+function WeaponEffects.register_smoke_spawner(object, health_threshold, spawn_pos_fn)
+	if not object or not object.current_health or not object.max_health then
+		return nil
+	end
+
+	local spawner = {
+		object = object,
+		health_threshold = health_threshold or 0.3,
+		last_spawn_time = 0,
+		spawn_pos_fn = spawn_pos_fn or function(obj)
+			-- Default: spawn at object position if it has x, y, z
+			return {x = obj.x or 0, y = obj.y or 0, z = obj.z or 0}
+		end
+	}
+
+	table.insert(smoke_spawners, spawner)
+	return spawner
+end
+
+-- Unregister an object from autonomous smoke spawning
+-- @param object: object reference to remove
+function WeaponEffects.unregister_smoke_spawner(object)
+	for i = #smoke_spawners, 1, -1 do
+		if smoke_spawners[i].object == object then
+			table.remove(smoke_spawners, i)
+			return true
+		end
+	end
+	return false
+end
+
+-- Update autonomous smoke spawners (called from main update loop)
+function WeaponEffects.update_smoke_spawners(dt)
+	if #smoke_spawners > 0 then
+		printh("UPDATE_SMOKE_SPAWNERS: " .. #smoke_spawners .. " spawners active")
+	end
+
+	for i = #smoke_spawners, 1, -1 do
+		local spawner = smoke_spawners[i]
+
+		-- Remove if object is no longer valid
+		if not spawner.object or not spawner.object.current_health then
+			table.remove(smoke_spawners, i)
+		else
+			local health_ratio = spawner.object.current_health / spawner.object.max_health
+
+			if #smoke_spawners > 0 then
+				printh("  Spawner health: " .. health_ratio .. " threshold: " .. spawner.health_threshold)
+			end
+
+			-- If below threshold and max particles not reached, spawn smoke
+			if health_ratio < spawner.health_threshold then
+				spawner.last_spawn_time = spawner.last_spawn_time + dt
+
+				-- Only spawn if spawn interval has passed
+				if spawner.last_spawn_time >= SMOKE_CONFIG.spawn_interval then
+					local spawn_pos = spawner.spawn_pos_fn(spawner.object)
+					WeaponEffects.spawn_smoke(spawn_pos)
+					spawner.last_spawn_time = 0
+				end
+			else
+				-- Reset timer if above threshold
+				spawner.last_spawn_time = 0
+			end
+		end
+	end
 end
 
 return WeaponEffects

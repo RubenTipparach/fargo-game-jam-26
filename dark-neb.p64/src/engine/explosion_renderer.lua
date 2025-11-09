@@ -8,25 +8,41 @@ local ExplosionRenderer = {}
 local PROJ_SCALE = 270 / 0.7002075  -- tan_half_fov = tan(70/2 degrees)
 local NEAR_PLANE = 0.1
 
--- Project a world-space vertex to screen space
+-- Project a world-space vertex to screen space with proper camera rotation
 local function project_vertex(world_pos, camera)
-	-- Calculate Z distance from camera
+	local cam_dist = camera.distance or 30
+
+	-- Precompute camera rotation
+	local cos_ry, sin_ry = cos(camera.ry), sin(camera.ry)
+	local cos_rx, sin_rx = cos(camera.rx), sin(camera.rx)
+
+	-- Translate to camera-relative coordinates
+	local x = world_pos.x - camera.x
+	local y = world_pos.y - camera.y
 	local z = world_pos.z - camera.z
 
+	-- Rotate around Y axis (yaw)
+	local x2 = x * cos_ry - z * sin_ry
+	local z2 = x * sin_ry + z * cos_ry
+
+	-- Rotate around X axis (pitch)
+	local y2 = y * cos_rx - z2 * sin_rx
+	local z3 = y * sin_rx + z2 * cos_rx + cam_dist
+
 	-- Check near plane
-	if z <= NEAR_PLANE then
+	if z3 <= NEAR_PLANE then
 		return nil
 	end
 
-	local inv_z = 1 / z
+	local inv_z = 1 / z3
 
 	-- Project to screen
 	return {
-		x = -world_pos.x * inv_z * PROJ_SCALE + 240,
-		y = -world_pos.y * inv_z * PROJ_SCALE + 135,
+		x = -x2 * inv_z * PROJ_SCALE + 240,
+		y = -y2 * inv_z * PROJ_SCALE + 135,
 		z = 0,
 		w = inv_z,
-		depth = z
+		depth = z3
 	}
 end
 

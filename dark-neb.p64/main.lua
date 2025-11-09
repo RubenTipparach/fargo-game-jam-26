@@ -103,6 +103,12 @@ local game_state = "menu"  -- "menu", "playing", "out_of_bounds", "game_over"
 local out_of_bounds_time = 0  -- Time spent out of bounds
 local is_out_of_bounds = false
 
+-- Player health wrapper for smoke spawner registration
+-- This allows the smoke spawner to track player health dynamically
+local player_health_obj = {
+	max_health = Config.health.max_health
+}
+
 -- Explosions
 local active_explosions = {}
 
@@ -838,6 +844,7 @@ function _init()
 				-- Reset game state
 				is_dead = false
 				current_health = Config.health.max_health
+				player_health_obj.current_health = current_health
 				death_time = 0
 				Config.ship.position = {x = 0, y = 0, z = 0}
 				ship_speed = 0
@@ -1072,6 +1079,24 @@ function _update()
 			death_time = 0
 			out_of_bounds_time = 0
 			is_out_of_bounds = false
+
+			-- Reset player health wrapper
+			player_health_obj.current_health = current_health
+
+			-- Register autonomous smoke spawners for player and satellite
+			-- Player ship: spawn smoke when health < 30%
+			WeaponEffects.register_smoke_spawner(
+				player_health_obj,
+				0.5,  -- Spawn smoke when below 30% health
+				function() return {x = 0, y = 0, z = 0} end  -- Spawn at ship origin
+			)
+
+			-- Satellite: spawn smoke when health < 30%
+			WeaponEffects.register_smoke_spawner(
+				Config.satellite,
+				0.5,  -- Spawn smoke when below 30% health
+				function() return {x = Config.satellite.position.x, y = Config.satellite.position.y, z = Config.satellite.position.z} end
+			)
 		end
 		return  -- Skip gameplay updates while in menu
 	end
@@ -1300,6 +1325,22 @@ function _update()
 			-- Fire beam from ship to target
 			WeaponEffects.fire_beam(ship_pos, target_pos)
 			printh("Beam fired from (" .. flr(ship_pos.x*10)/10 .. "," .. flr(ship_pos.y*10)/10 .. "," .. flr(ship_pos.z*10)/10 .. ") to (" .. flr(target_pos.x*10)/10 .. "," .. flr(target_pos.y*10)/10 .. "," .. flr(target_pos.z*10)/10 .. ")")
+		end
+	end
+
+	-- Debug smoke spawn (Z key)
+	if keyp("z") then
+		printh("Z KEY PRESSED - SPAWNING DEBUG SMOKE!")
+		local target_pos = nil
+		if model_satellite then
+			target_pos = Config.satellite.position
+		elseif model_planet then
+			target_pos = Config.planet.position
+		end
+
+		if target_pos then
+			WeaponEffects.spawn_smoke(target_pos)
+			printh("Smoke spawned at (" .. flr(target_pos.x*10)/10 .. "," .. flr(target_pos.y*10)/10 .. "," .. flr(target_pos.z*10)/10 .. ")")
 		end
 	end
 
@@ -1615,6 +1656,7 @@ function _update()
 		if check_box_sphere_collision(ship_box_min, ship_box_max, planet_center, planet_collider.radius) then
 			-- Collision detected!
 			current_health = 0
+			player_health_obj.current_health = current_health
 			is_dead = true
 			death_time = 0
 
@@ -1890,6 +1932,12 @@ function _draw()
 
 	-- Render weapon beams and add to face queue
 	WeaponEffects.render_beams(camera, all_faces)
+
+	-- Render weapon explosions and add to face queue
+	WeaponEffects.render_explosions(camera, all_faces)
+
+	-- Render weapon smoke and add to face queue
+	WeaponEffects.render_smoke(camera, all_faces)
 
 	-- Sort all faces by depth
 	RendererLit.sort_faces(all_faces)
