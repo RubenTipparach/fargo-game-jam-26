@@ -25,6 +25,7 @@ Quat = include("src/engine/quaternion.lua")
 DebugRenderer = include("src/debug_renderer.lua")
 ExplosionRenderer = include("src/engine/explosion_renderer.lua")
 Explosion = include("src/particles/explosion.lua")
+UIRenderer = include("src/ui/ui_renderer.lua")
 Panel = include("src/ui/panel.lua")
 Button = include("src/ui/button.lua")
 Minimap = include("src/minimap.lua")
@@ -93,33 +94,6 @@ local is_out_of_bounds = false
 
 -- Explosions
 local active_explosions = {}
-
--- UI Components for death screen
-local death_panel = Panel.new(300, 150, "YOU DIED")
-death_panel:set_colors(0, 7, 8)  -- Black bg, white border, red title
-local restart_button = Button.new(150, 100, 180, 30, "RESTART", function()
-	-- Reset game state
-	is_dead = false
-	current_health = Config.health.max_health
-	death_time = 0
-	Config.ship.position = {x = 0, y = 0, z = 0}
-	ship_speed = 0
-	target_ship_speed = 0
-	particle_trails = {}
-	active_explosions = {}
-	ship_heading_dir = {x = 0, z = 1}
-	target_heading_dir = {x = 0, z = 1}
-	game_state = "menu"
-end)
-
--- UI Components for out-of-bounds warning
-local out_of_bounds_panel = Panel.new(280, 100, "LEAVING BATTLEFIELD")
-out_of_bounds_panel:set_colors(0, 7, 8)  -- Black bg, white border, red title
-local back_to_menu_button = Button.new(160, 115, 160, 30, "BACK TO MENU", function()
-	game_state = "menu"
-	out_of_bounds_time = 0
-	is_out_of_bounds = false
-end)
 
 -- Spawned spheres (persistent objects)
 local spawned_spheres = {}
@@ -580,55 +554,6 @@ local function draw_box_wireframe(min_x, min_y, min_z, max_x, max_y, max_z, came
 	end
 end
 
--- Draw wireframe sphere for debug
-local function draw_sphere_wireframe(cx, cy, cz, radius, camera, color)
-	local segments = 16
-	local stacks = 8
-
-	-- Draw latitude circles
-	for stack = 0, stacks do
-		local v = stack / stacks
-		local angle_v = v * 0.5  -- Angle from top
-		local y = cy + cos(angle_v) * radius
-		local ring_radius = sin(angle_v) * radius
-
-		for seg = 0, segments do
-			local angle_h = seg / segments
-			local angle_h_next = (seg + 1) / segments
-
-			local x1 = cx + cos(angle_h * 2 * 3.14159) * ring_radius
-			local z1 = cz + sin(angle_h * 2 * 3.14159) * ring_radius
-			local x2 = cx + cos(angle_h_next * 2 * 3.14159) * ring_radius
-			local z2 = cz + sin(angle_h_next * 2 * 3.14159) * ring_radius
-
-			draw_line_3d(x1, y, z1, x2, y, z2, camera, color)
-		end
-	end
-
-	-- Draw longitude lines
-	for seg = 0, segments / 2 do
-		local angle_h = seg / segments
-
-		for stack = 0, stacks - 1 do
-			local v = stack / stacks
-			local v_next = (stack + 1) / stacks
-			local angle_v = v * 0.5
-			local angle_v_next = v_next * 0.5
-
-			local y1 = cy + cos(angle_v) * radius
-			local y2 = cy + cos(angle_v_next) * radius
-			local ring_r1 = sin(angle_v) * radius
-			local ring_r2 = sin(angle_v_next) * radius
-
-			local x1 = cx + cos(angle_h * 2 * 3.14159) * ring_r1
-			local z1 = cz + sin(angle_h * 2 * 3.14159) * ring_r1
-			local x2 = cx + cos(angle_h * 2 * 3.14159) * ring_r2
-			local z2 = cz + sin(angle_h * 2 * 3.14159) * ring_r2
-
-			draw_line_3d(x1, y1, z1, x2, y2, z2, camera, color)
-		end
-	end
-end
 
 -- Box vs Sphere collision detection
 -- Returns true if colliding
@@ -853,6 +778,33 @@ end
 function _init()
 	-- Initialize color table for lit rendering
 	RendererLit.init_color_table()
+
+	-- Initialize UI renderer
+	UIRenderer.init(
+		{panel = Panel, button = Button, minimap = Minimap, menu = Menu},
+		Config,
+		{
+			on_restart = function()
+				-- Reset game state
+				is_dead = false
+				current_health = Config.health.max_health
+				death_time = 0
+				Config.ship.position = {x = 0, y = 0, z = 0}
+				ship_speed = 0
+				target_ship_speed = 0
+				particle_trails = {}
+				active_explosions = {}
+				ship_heading_dir = {x = 0, z = 1}
+				target_heading_dir = {x = 0, z = 1}
+				game_state = "menu"
+			end,
+			on_menu = function()
+				game_state = "menu"
+				out_of_bounds_time = 0
+				is_out_of_bounds = false
+			end
+		}
+	)
 
 	-- Generate background stars
 	generate_stars()
@@ -1534,11 +1486,8 @@ function _draw()
 	local speed_display = flr(ship_speed * Config.ship.max_speed * 10) / 10
 	print("speed: " .. speed_display, slider_x - 30, slider_y + slider_height + 30, 7)
 
-	-- CPU usage (always visible if Config.show_cpu is true)
-	if Config.show_cpu then
-		local cpu = stat(1) * 100
-		print("cpu: " .. flr(cpu) .. "%", 380, 2, cpu > 80 and 8 or 7)
-	end
+	-- CPU usage (drawn via UIRenderer)
+	UIRenderer.draw_cpu_stats()
 
 	if (Config.debug) then
 		-- Camera angles display
@@ -1760,9 +1709,9 @@ function _draw()
 	local health_display = flr(current_health)
 	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
 
-	-- Draw minimap during gameplay
+	-- Draw minimap during gameplay (via UIRenderer)
 	if game_state == "playing" then
-		Minimap.draw(Config.ship.position, Config.planet.position, Config.planet.radius)
+		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius)
 	end
 
 	-- Death screen (with 2 second delay before showing)
@@ -1774,13 +1723,10 @@ function _draw()
 			local mx, my, mb = mouse()
 			local mouse_clicked = (mb & 1) == 1
 
-			-- Update and draw death panel
-			death_panel:show()
-			death_panel:draw()
-
-			-- Update and draw restart button
-			restart_button:update(mx, my, mouse_clicked)
-			restart_button:draw()
+			-- Update and draw death panel via UIRenderer
+			local buttons = UIRenderer.get_buttons()
+			buttons.restart_button:update(mx, my, mouse_clicked)
+			UIRenderer.draw_death_screen()
 		end
 	end
 
@@ -1792,20 +1738,14 @@ function _draw()
 		local mx, my, mb = mouse()
 		local mouse_clicked = (mb & 1) == 1
 
-		-- Draw out of bounds panel
-		out_of_bounds_panel:show()
-		out_of_bounds_panel:draw()
-
 		-- Calculate remaining time
 		local remaining_time = Config.battlefield.out_of_bounds_warning_time - out_of_bounds_time
 		remaining_time = mid(0, remaining_time, Config.battlefield.out_of_bounds_warning_time)
 
-		-- Draw countdown
-		print("Time remaining: " .. flr(remaining_time) .. "s", 165, 90, 11)
-
-		-- Update and draw back to menu button
-		back_to_menu_button:update(mx, my, mouse_clicked)
-		back_to_menu_button:draw()
+		-- Draw out of bounds panel via UIRenderer
+		local buttons = UIRenderer.get_buttons()
+		buttons.back_to_menu_button:update(mx, my, mouse_clicked)
+		UIRenderer.draw_out_of_bounds(remaining_time)
 
 		-- End game if time runs out
 		if out_of_bounds_time >= Config.battlefield.out_of_bounds_warning_time then
@@ -1817,6 +1757,6 @@ function _draw()
 
 	-- Menu screen
 	if game_state == "menu" then
-		Menu.draw()
+		UIRenderer.draw_menu()
 	end
 end

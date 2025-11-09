@@ -9,7 +9,8 @@ ProgressBar.__index = ProgressBar
 -- x, y: top-left position
 -- width, height: bar dimensions
 -- show_text: whether to show value text (defaults to true)
-function ProgressBar.new(x, y, width, height, show_text)
+-- label: optional label text (unused, kept for compatibility with Bar component)
+function ProgressBar.new(x, y, width, height, show_text, label)
 	local self = setmetatable({}, ProgressBar)
 
 	self.x = x
@@ -20,6 +21,7 @@ function ProgressBar.new(x, y, width, height, show_text)
 	self.max_value = 1.0
 	self.show_text = show_text ~= false
 	self.display_value = nil  -- Optional custom display text
+	self.label = label  -- Optional label (kept for compatibility)
 
 	-- Colors
 	self.bg_color = 0      -- Black background
