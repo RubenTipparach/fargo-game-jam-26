@@ -26,11 +26,13 @@ MathUtils = include("src/engine/math_utils.lua")
 DebugRenderer = include("src/debug_renderer.lua")
 ExplosionRenderer = include("src/engine/explosion_renderer.lua")
 Explosion = include("src/particles/explosion.lua")
+RotateSprites = include("src/engine/rotate_sprites.lua")
 UIRenderer = include("src/ui/ui_renderer.lua")
 Panel = include("src/ui/panel.lua")
 Button = include("src/ui/button.lua")
 ArcUI = include("src/ui/arc_ui.lua")
 WeaponsUI = include("src/ui/weapons_ui.lua")
+WeaponEffects = include("src/systems/weapon_effects.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -1102,8 +1104,58 @@ function _update()
 			-- Check for weapon selection clicks on main button
 			local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
 			if weapon_id then
-				selected_weapon = weapon_id
-				printh("Weapon " .. weapon_id .. " selected")
+				-- Fire weapon if charged and has energy
+				local weapon = Config.weapons[weapon_id]
+				local state = weapon_states[weapon_id]
+				local has_energy = energy_system.weapons >= weapon.energy_cost
+				local is_charged = has_energy and state.charge >= 1.0
+
+				if is_charged and selected_target then
+					-- Fire beam at selected target
+					local ship_pos = Config.ship.position
+					local target_pos = nil
+					local target_ref = nil
+
+					if selected_target == "satellite" and model_satellite then
+						target_pos = Config.satellite.position
+						target_ref = Config.satellite
+					elseif selected_target == "planet" and model_planet then
+						target_pos = Config.planet.position
+						target_ref = Config.planet
+					end
+
+					if target_pos and target_ref then
+						-- Fire beam
+						WeaponEffects.fire_beam(ship_pos, target_pos)
+
+						-- Spawn explosion at target (damage is applied in spawn_explosion)
+						WeaponEffects.spawn_explosion(target_pos, target_ref)
+
+						-- Check if target should spawn smoke (health > 70% damaged = health < 30%)
+						if target_ref.current_health and target_ref.max_health then
+							local health_percent = target_ref.current_health / target_ref.max_health
+							if health_percent < 0.3 then  -- Damage is > 70%
+								-- Try to spawn smoke at target location with slight random offset
+								local smoke_offset_x = (math.random() - 0.5) * 4
+								local smoke_offset_z = (math.random() - 0.5) * 4
+								local smoke_pos = {
+									x = target_pos.x + smoke_offset_x,
+									y = target_pos.y + 2,
+									z = target_pos.z + smoke_offset_z
+								}
+								WeaponEffects.spawn_smoke(smoke_pos, {x = 0, y = 0.3, z = 0})
+							end
+						end
+
+						-- Reset charge after firing
+						state.charge = 0
+						printh("Weapon " .. weapon_id .. " fired! Damage: " .. (target_ref.current_health or "N/A"))
+					end
+				else
+					-- Just select weapon for reference
+					selected_weapon = weapon_id
+					printh("Weapon " .. weapon_id .. " selected (not ready)")
+				end
 			else
 				-- Check for auto-fire toggle clicks
 				local toggle_id = WeaponsUI.get_toggle_at_point(mx, my, Config)
@@ -1231,16 +1283,24 @@ function _update()
 	-- Clamp light pitch to reasonable range
 	light_pitch = mid(-1.5, light_pitch, 1.5)
 
-	-- X key to spawn explosion
+	-- X key to fire debug beam (VFX only, no damage logic)
 	if keyp("x") then
-		printh("X KEY PRESSED - SPAWNING EXPLOSION!")
-		local explosion = Explosion.new(
-			Config.ship.position.x,
-			Config.ship.position.y,
-			Config.ship.position.z,
-			Config.explosion
-		)
-		table.insert(active_explosions, explosion)
+		printh("X KEY PRESSED - FIRING DEBUG BEAM!")
+		local ship_pos = Config.ship.position
+
+		-- Fire beam to satellite or planet
+		local target_pos = nil
+		if model_satellite then
+			target_pos = Config.satellite.position
+		elseif model_planet then
+			target_pos = Config.planet.position
+		end
+
+		if target_pos then
+			-- Fire beam from ship to target
+			WeaponEffects.fire_beam(ship_pos, target_pos)
+			printh("Beam fired from (" .. flr(ship_pos.x*10)/10 .. "," .. flr(ship_pos.y*10)/10 .. "," .. flr(ship_pos.z*10)/10 .. ") to (" .. flr(target_pos.x*10)/10 .. "," .. flr(target_pos.y*10)/10 .. "," .. flr(target_pos.z*10)/10 .. ")")
+		end
 	end
 
 	-- Handle photon beam button clicks (only during gameplay)
@@ -1637,6 +1697,9 @@ function _update()
 		death_time = death_time + 0.016
 	end
 
+	-- Update weapon effects (beams, explosions, smoke)
+	WeaponEffects.update(0.016)  -- 60fps delta time
+
 	-- Update mouse button state for next frame's click detection
 	last_mouse_button_state = (mb & 1) == 1
 end
@@ -1825,6 +1888,9 @@ function _draw()
 	-- Render explosions and add to face list with proper depth sorting
 	ExplosionRenderer.render_explosions(active_explosions, camera, all_faces)
 
+	-- Render weapon beams and add to face queue
+	WeaponEffects.render_beams(camera, all_faces)
+
 	-- Sort all faces by depth
 	RendererLit.sort_faces(all_faces)
 
@@ -1930,6 +1996,22 @@ function _draw()
 			print("✓", toggle_x + 2, toggle_y, 0)
 		end
 		print("auto", toggle_x + 15, toggle_y + 1, 7)
+	end
+
+	-- Draw weapon effects (beams, explosions, smoke)
+	local utilities = {
+		draw_line_3d = draw_line_3d,
+		project_to_screen = project_point,
+		Renderer = Renderer,
+	}
+	WeaponEffects.draw(camera, utilities)
+
+	-- Draw debug lines for active beams (always visible)
+	local active_beams = WeaponEffects.get_beams()
+	for _, beam in ipairs(active_beams) do
+		-- Draw a bright magenta line from beam start to end
+		draw_line_3d(beam.start_pos.x, beam.start_pos.y, beam.start_pos.z,
+					 beam.end_pos.x, beam.end_pos.y, beam.end_pos.z, camera, 13)  -- Bright magenta
 	end
 
 	-- Draw weapons UI
