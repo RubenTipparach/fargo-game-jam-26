@@ -113,7 +113,7 @@ local MISSIONS = {
 }
 
 -- Initialize missions
-function Missions.init()
+function Missions.init(config)
 	current_mission = 1
 	mission_complete = false  -- Reset mission complete flag
 	shown_dialogs = {}  -- Reset shown dialogs
@@ -128,6 +128,12 @@ function Missions.init()
 	dialog_text = ""  -- Reset dialog text
 	dialog_visible = false  -- Hide dialog
 	dialog_duration = 0  -- Reset dialog duration
+
+	-- Set dialog panel position from config
+	if config and config.mission_ui then
+		help_panel_x = config.mission_ui.dialog_panel_x
+		help_panel_y = config.mission_ui.dialog_panel_y
+	end
 
 	for _, mission in ipairs(MISSIONS) do
 		mission_data[mission.id] = {
@@ -588,11 +594,12 @@ end
 
 -- Draw help panel overlay (call this LAST, after all other UI)
 -- @param mouse_x, mouse_y: optional mouse coordinates for button hover detection
-function Missions.draw_help_panel(mouse_x, mouse_y)
+-- @param config: global config object for UI positioning
+function Missions.draw_help_panel(mouse_x, mouse_y, config)
 	-- Draw toggle button in top-right corner of the dialog panel
-	local toggle_x = help_panel_x + 200   -- Right edge of panel (panel width is 200)
-	local toggle_y = help_panel_y
-	local toggle_size = 12
+	local toggle_x = help_panel_x + (config and config.mission_ui and config.mission_ui.dialog_toggle_x_offset or 200)
+	local toggle_y = help_panel_y + (config and config.mission_ui and config.mission_ui.dialog_toggle_y_offset or 0)
+	local toggle_size = config and config.mission_ui and config.mission_ui.dialog_toggle_size or 12
 
 	-- Check if mouse is hovering over toggle
 	local toggle_hovered = mouse_x and mouse_y and
@@ -679,12 +686,13 @@ end
 -- Check if OK button was clicked (for mission success screen)
 -- @param mouse_x, mouse_y: mouse coordinates
 -- @param mouse_clicked: whether mouse was clicked this frame
+-- @param config: global config object for UI dimensions
 -- @return: true if OK button was clicked
-function Missions.check_ok_button_click(mouse_x, mouse_y, mouse_clicked)
+function Missions.check_ok_button_click(mouse_x, mouse_y, mouse_clicked, config)
 	-- Only check for OK button when showing mission success message and it hasn't been clicked yet
 	if dialog_text == "Mission Success!!!\n\nClick OK to return\nto main menu" and mouse_clicked and not ok_button_clicked then
 		-- Check if click is within OK button bounds
-		local panel_height = 80
+		local panel_height = config and config.mission_ui and config.mission_ui.dialog_panel_height or 80
 		local button_x = help_panel_x + 2
 		local button_y = help_panel_y + panel_height - 15  -- Near bottom of panel (80-15=65)
 		local button_width = 40

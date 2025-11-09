@@ -897,7 +897,7 @@ function _init()
 	WeaponEffects.setup(Config)
 
 	-- Initialize missions system
-	Missions.init()
+	Missions.init(Config)
 
 	-- Initialize menu with available missions
 	Menu.init(Config)
@@ -1246,7 +1246,7 @@ function _update()
 			slider_speed_desired = Config.ship.speed
 
 			-- Reset mission camera tracking first
-			Missions.init()  -- Initialize missions with all state reset
+			Missions.init(Config)  -- Initialize missions with all state reset
 
 			-- Get selected mission and set it
 			local selected_mission = Menu.get_selected_mission()
@@ -1296,9 +1296,9 @@ function _update()
 	ship_pos = Config.ship.position
 
 	-- Check for objective panel toggle click (top-right corner of dialog panel)
-	local panel_toggle_x = 180 + 200  -- Dialog panel x=180 + width 200
-	local panel_toggle_y = 10
-	local panel_toggle_size = 12
+	local panel_toggle_x = Config.mission_ui.dialog_panel_x + Config.mission_ui.dialog_toggle_x_offset
+	local panel_toggle_y = Config.mission_ui.dialog_panel_y + Config.mission_ui.dialog_toggle_y_offset
+	local panel_toggle_size = Config.mission_ui.dialog_toggle_size
 	if (mb & 1 == 1) and not last_mouse_button_state then  -- Click detected
 		if mx >= panel_toggle_x and mx <= panel_toggle_x + panel_toggle_size and my >= panel_toggle_y and my <= panel_toggle_y + panel_toggle_size then
 			Missions.toggle_objective_panel()
@@ -1332,10 +1332,10 @@ function _update()
 			handle_energy_clicks(mx, my)
 		elseif button_pressed then
 			-- Check for mission OK button click first
-			if Missions.check_ok_button_click(mx, my, button_pressed) then
+			if Missions.check_ok_button_click(mx, my, button_pressed, Config) then
 				-- OK button was clicked on mission success screen, return to menu
 				game_state = "menu"
-				Missions.init()  -- Reset missions for next playthrough
+				Missions.init(Config)  -- Reset missions for next playthrough
 				-- Skip the next menu click to prevent clicking mission buttons while mouse is held
 				skip_next_menu_click = true
 			-- Check for show arcs toggle click
@@ -2958,6 +2958,6 @@ function _draw()
 
 	-- Draw help panel overlay LAST (on top of absolutely everything)
 	if game_state == "playing" then
-		Missions.draw_help_panel(mx, my)
+		Missions.draw_help_panel(mx, my, Config)
 	end
 end

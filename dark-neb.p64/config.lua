@@ -274,6 +274,17 @@ Config.mission_ui = {
 	panel_width = 110,  -- Width of unified panel
 	panel_height = 225,  -- Total height of unified panel
 
+	-- Dialog panel (objectives and mission info)
+	dialog_panel_x = 180,  -- Top-left corner
+	dialog_panel_y = 10,
+	dialog_panel_width = 200,  -- Width of dialog panel
+	dialog_panel_height = 80,  -- Height of dialog panel
+
+	-- Dialog toggle button ("H" for hide/show)
+	dialog_toggle_x_offset = -16,  -- Offset from dialog_panel_x (right edge of panel)
+	dialog_toggle_y_offset = 0,  -- Offset from dialog_panel_y
+	dialog_toggle_size = 12,  -- Size of the toggle button
+
 	-- Mission objective section
 	objective = {
 		title_color = 11,  -- Yellow for title
