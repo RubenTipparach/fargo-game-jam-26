@@ -63,6 +63,7 @@ function Beam.new(start_pos, end_pos, config)
 	self.active = true
 	self.sprite_id = config.sprite_id or 13
 	self.width = config.width or 2
+	self.is_incoming = config.is_incoming or false  -- True for incoming beams (towards camera), false for outgoing
 	return self
 end
 
@@ -75,8 +76,9 @@ function Beam:update(dt)
 	return true
 end
 
--- Get mesh face for rendering
-function Beam:get_mesh_face()
+-- Get mesh face for rendering - creates two segments based on camera distance
+-- @param camera: camera object with distance property
+function Beam:get_mesh_face(camera)
 	-- Calculate beam direction and length
 	local dx = self.end_pos.x - self.start_pos.x
 	local dy = self.end_pos.y - self.start_pos.y
@@ -92,6 +94,32 @@ function Beam:get_mesh_face()
 	dy = dy / beam_length
 	dz = dz / beam_length
 
+	-- Get camera distance (default 30 if not provided)
+	local cam_dist = (camera and camera.distance) or 30
+
+	-- Determine the split point based on beam direction and camera distance
+	-- For outgoing beams: split at camera_distance from start
+	-- For incoming beams: split at camera_distance from end (backwards)
+	local split_distance
+	if self.is_incoming then
+		-- Incoming: start from far end, move backwards toward camera by camera_distance
+		split_distance = max(0, beam_length - cam_dist)
+	else
+		-- Outgoing: start from near end, move forward by camera_distance
+		split_distance = min(beam_length, cam_dist)
+	end
+
+	-- Create two segments from the beam
+	-- Segment 1: start to split point
+	-- Segment 2: split point to end
+	return self:_create_dual_segment_mesh(dx, dy, dz, beam_length, split_distance)
+end
+
+-- Helper function to create dual segment mesh
+-- @param dx, dy, dz: normalized beam direction
+-- @param beam_length: total beam length
+-- @param split_distance: distance along beam to split at
+function Beam:_create_dual_segment_mesh(dx, dy, dz, beam_length, split_distance)
 	-- Create first perpendicular vector to beam direction, in XZ plane
 	-- This keeps the beam flat on the XZ plane (horizontal width)
 	local perp1_x = -dz
@@ -105,17 +133,9 @@ function Beam:get_mesh_face()
 	end
 
 	-- Create second perpendicular vector (cross product: beam_dir × perp1)
-	-- This gives us a perpendicular that's perpendicular to both beam and perp1
-	local perp2_x = dy * perp1_z - dz * perp1_x
+	local perp2_x = dy * perp1_z
 	local perp2_y = dz * perp1_x - dx * perp1_z
-	local perp2_z = dx * 0 - dy * perp1_x  -- Note: simplified cross product
-
-	-- Actually, let's compute it correctly: cross(beam_dir, perp1)
-	-- beam = (dx, dy, dz), perp1 = (perp1_x, 0, perp1_z)
-	-- cross = (dy * perp1_z - dz * 0, dz * perp1_x - dx * perp1_z, dx * 0 - dy * perp1_x)
-	perp2_x = dy * perp1_z
-	perp2_y = dz * perp1_x - dx * perp1_z
-	perp2_z = -dy * perp1_x
+	local perp2_z = -dy * perp1_x
 
 	-- Normalize perpendicular vector 2
 	local perp2_len = sqrt(perp2_x*perp2_x + perp2_y*perp2_y + perp2_z*perp2_z)
@@ -126,79 +146,80 @@ function Beam:get_mesh_face()
 	end
 
 	local half_width = self.width / 2
-	local half_length = beam_length / 2
 
-	-- Calculate midpoint
-	local mid_x = (self.start_pos.x + self.end_pos.x) / 2
-	local mid_y = (self.start_pos.y + self.end_pos.y) / 2
-	local mid_z = (self.start_pos.z + self.end_pos.z) / 2
+	-- Segment 1: from start (0) to split_distance
+	local half_len1 = split_distance / 2
+	local mid1_x = self.start_pos.x + dx * half_len1
+	local mid1_y = self.start_pos.y + dy * half_len1
+	local mid1_z = self.start_pos.z + dz * half_len1
 
-	-- Create beam quad vertices centered at midpoint
-	-- Two perpendicular quads for visibility from all angles
-	-- Quad 1: Uses perp1 (XZ plane perpendicular)
-	-- Quad 2: Uses perp2 (truly perpendicular to both beam and perp1)
-	-- Vertices relative to midpoint:
-	local verts = {
-		-- Quad 1: First perpendicular direction
-		-- Start point, left (relative to midpoint, so negate to go backward)
-		{x = -dx * half_length - perp1_x * half_width, y = -dy * half_length, z = -dz * half_length - perp1_z * half_width},
-		-- Start point, right
-		{x = -dx * half_length + perp1_x * half_width, y = -dy * half_length, z = -dz * half_length + perp1_z * half_width},
-		-- End point, right (positive direction from midpoint)
-		{x = dx * half_length + perp1_x * half_width, y = dy * half_length, z = dz * half_length + perp1_z * half_width},
-		-- End point, left
-		{x = dx * half_length - perp1_x * half_width, y = dy * half_length, z = dz * half_length - perp1_z * half_width},
+	local verts1 = {
+		-- Quad 1 for segment 1
+		{x = -dx * half_len1 - perp1_x * half_width, y = -dy * half_len1, z = -dz * half_len1 - perp1_z * half_width},
+		{x = -dx * half_len1 + perp1_x * half_width, y = -dy * half_len1, z = -dz * half_len1 + perp1_z * half_width},
+		{x = dx * half_len1 + perp1_x * half_width, y = dy * half_len1, z = dz * half_len1 + perp1_z * half_width},
+		{x = dx * half_len1 - perp1_x * half_width, y = dy * half_len1, z = dz * half_len1 - perp1_z * half_width},
+		-- Quad 2 for segment 1
+		{x = -dx * half_len1 - perp2_x * half_width, y = -dy * half_len1 - perp2_y * half_width, z = -dz * half_len1 - perp2_z * half_width},
+		{x = -dx * half_len1 + perp2_x * half_width, y = -dy * half_len1 + perp2_y * half_width, z = -dz * half_len1 + perp2_z * half_width},
+		{x = dx * half_len1 + perp2_x * half_width, y = dy * half_len1 + perp2_y * half_width, z = dz * half_len1 + perp2_z * half_width},
+		{x = dx * half_len1 - perp2_x * half_width, y = dy * half_len1 - perp2_y * half_width, z = dz * half_len1 - perp2_z * half_width},
+	}
 
-		-- Quad 2: Second perpendicular direction (cross product of beam and perp1)
-		-- Start point, bottom (relative to midpoint, so negate to go backward)
-		{x = -dx * half_length - perp2_x * half_width, y = -dy * half_length - perp2_y * half_width, z = -dz * half_length - perp2_z * half_width},
-		-- Start point, top
-		{x = -dx * half_length + perp2_x * half_width, y = -dy * half_length + perp2_y * half_width, z = -dz * half_length + perp2_z * half_width},
-		-- End point, top (positive direction from midpoint)
-		{x = dx * half_length + perp2_x * half_width, y = dy * half_length + perp2_y * half_width, z = dz * half_length + perp2_z * half_width},
-		-- End point, bottom
-		{x = dx * half_length - perp2_x * half_width, y = dy * half_length - perp2_y * half_width, z = dz * half_length - perp2_z * half_width},
+	-- Segment 2: from split_distance to end
+	local remaining_len = beam_length - split_distance
+	local half_len2 = remaining_len / 2
+	local mid2_x = self.start_pos.x + dx * (split_distance + half_len2)
+	local mid2_y = self.start_pos.y + dy * (split_distance + half_len2)
+	local mid2_z = self.start_pos.z + dz * (split_distance + half_len2)
+
+	local verts2 = {
+		-- Quad 1 for segment 2
+		{x = -dx * half_len2 - perp1_x * half_width, y = -dy * half_len2, z = -dz * half_len2 - perp1_z * half_width},
+		{x = -dx * half_len2 + perp1_x * half_width, y = -dy * half_len2, z = -dz * half_len2 + perp1_z * half_width},
+		{x = dx * half_len2 + perp1_x * half_width, y = dy * half_len2, z = dz * half_len2 + perp1_z * half_width},
+		{x = dx * half_len2 - perp1_x * half_width, y = dy * half_len2, z = dz * half_len2 - perp1_z * half_width},
+		-- Quad 2 for segment 2
+		{x = -dx * half_len2 - perp2_x * half_width, y = -dy * half_len2 - perp2_y * half_width, z = -dz * half_len2 - perp2_z * half_width},
+		{x = -dx * half_len2 + perp2_x * half_width, y = -dy * half_len2 + perp2_y * half_width, z = -dz * half_len2 + perp2_z * half_width},
+		{x = dx * half_len2 + perp2_x * half_width, y = dy * half_len2 + perp2_y * half_width, z = dz * half_len2 + perp2_z * half_width},
+		{x = dx * half_len2 - perp2_x * half_width, y = dy * half_len2 - perp2_y * half_width, z = dz * half_len2 - perp2_z * half_width},
 	}
 
 	-- Fade progress for beam fade-out effect
 	local fade_progress = self.age / self.lifetime
 	local opacity = max(0, 1.0 - fade_progress)
 
-	local faces = {
-		-- Quad 1: XZ plane - both facing directions for visibility from any angle
+	-- Face data is the same for both segments - all 8 faces visible from any angle
+	local face_template = {
 		{1, 2, 3, self.sprite_id, vec(16,0), vec(16,16), vec(0,16)},
 		{1, 3, 4, self.sprite_id, vec(16,0), vec(0,16), vec(0,0)},
-		-- Reverse winding for back faces
 		{3, 2, 1, self.sprite_id, vec(0,16), vec(16,16), vec(16,0)},
 		{4, 3, 1, self.sprite_id, vec(0,0), vec(0,16), vec(16,0)},
-
-		-- Quad 2: Y axis - both facing directions for visibility from any angle
 		{5, 6, 7, self.sprite_id, vec(16,0), vec(16,16), vec(0,16)},
 		{5, 7, 8, self.sprite_id, vec(16,0), vec(0,16), vec(0,0)},
-		-- Reverse winding for back faces
 		{7, 6, 5, self.sprite_id, vec(0,16), vec(16,16), vec(16,0)},
 		{8, 7, 5, self.sprite_id, vec(0,0), vec(0,16), vec(16,0)}
 	}
 
-	-- Debug: Print beam info
-	printh("=== BEAM ===")
-	printh("Start: " .. self.start_pos.x .. ", " .. self.start_pos.y .. ", " .. self.start_pos.z)
-	printh("End: " .. self.end_pos.x .. ", " .. self.end_pos.y .. ", " .. self.end_pos.z)
-	printh("Dir: " .. dx .. ", " .. dy .. ", " .. dz .. " (len=" .. beam_length .. ")")
-	printh("Perp1: " .. perp1_x .. ", 0, " .. perp1_z)
-	printh("Perp2: " .. perp2_x .. ", " .. perp2_y .. ", " .. perp2_z)
-	printh("Midpoint: " .. mid_x .. ", " .. mid_y .. ", " .. mid_z)
-	for i, v in ipairs(verts) do
-		printh("V" .. i .. ": " .. v.x .. ", " .. v.y .. ", " .. v.z)
-	end
-
+	-- Return both segments
 	return {
-		verts = verts,
-		faces = faces,
-		x = mid_x,
-		y = mid_y,
-		z = mid_z,
-		opacity = opacity
+		{
+			verts = verts1,
+			faces = face_template,
+			x = mid1_x,
+			y = mid1_y,
+			z = mid1_z,
+			opacity = opacity
+		},
+		{
+			verts = verts2,
+			faces = face_template,
+			x = mid2_x,
+			y = mid2_y,
+			z = mid2_z,
+			opacity = opacity
+		}
 	}
 end
 
@@ -406,44 +427,47 @@ local function project_vertex(world_pos, camera)
 end
 
 -- Render beams and add to face list
--- ClipSpace culling in renderer_lit will handle near plane clipping
+-- Beams are split into two segments based on camera distance to handle culling
 function WeaponEffects.render_beams(camera, all_faces)
 	for _, beam in ipairs(beams) do
 		if beam.active then
-			local mesh = beam:get_mesh_face()
-			if mesh then
-				-- Process each face in the beam mesh individually
-				for i = 1, #mesh.faces do
-					local face = mesh.faces[i]
-					local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
-					local v1 = mesh.verts[v1_idx]
-					local v2 = mesh.verts[v2_idx]
-					local v3 = mesh.verts[v3_idx]
+			local segments = beam:get_mesh_face(camera)
+			if segments then
+				-- get_mesh_face returns an array of 2 segments
+				for _, mesh in ipairs(segments) do
+					-- Process each face in the segment mesh individually
+					for i = 1, #mesh.faces do
+						local face = mesh.faces[i]
+						local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
+						local v1 = mesh.verts[v1_idx]
+						local v2 = mesh.verts[v2_idx]
+						local v3 = mesh.verts[v3_idx]
 
-					-- Convert to world coordinates
-					local w1 = {x = v1.x + mesh.x, y = v1.y + mesh.y, z = v1.z + mesh.z}
-					local w2 = {x = v2.x + mesh.x, y = v2.y + mesh.y, z = v2.z + mesh.z}
-					local w3 = {x = v3.x + mesh.x, y = v3.y + mesh.y, z = v3.z + mesh.z}
+						-- Convert to world coordinates
+						local w1 = {x = v1.x + mesh.x, y = v1.y + mesh.y, z = v1.z + mesh.z}
+						local w2 = {x = v2.x + mesh.x, y = v2.y + mesh.y, z = v2.z + mesh.z}
+						local w3 = {x = v3.x + mesh.x, y = v3.y + mesh.y, z = v3.z + mesh.z}
 
-					-- Project all vertices
-					local p1 = project_vertex(w1, camera)
-					local p2 = project_vertex(w2, camera)
-					local p3 = project_vertex(w3, camera)
+						-- Project all vertices
+						local p1 = project_vertex(w1, camera)
+						local p2 = project_vertex(w2, camera)
+						local p3 = project_vertex(w3, camera)
 
-					-- Only add face if all vertices project to screen
-					if p1 and p2 and p3 then
-						-- Calculate average depth
-						local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333
+						-- Only add face if all vertices project to screen
+						if p1 and p2 and p3 then
+							-- Calculate average depth
+							local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333
 
-						table.insert(all_faces, {
-							face = {v1_idx, v2_idx, v3_idx, face[4], face[5], face[6], face[7]},
-							depth = avg_depth,
-							p1 = p1,
-							p2 = p2,
-							p3 = p3,
-							unlit = true,
-							dither_opacity = mesh.opacity
-						})
+							table.insert(all_faces, {
+								face = {v1_idx, v2_idx, v3_idx, face[4], face[5], face[6], face[7]},
+								depth = avg_depth,
+								p1 = p1,
+								p2 = p2,
+								p3 = p3,
+								unlit = true,
+								dither_opacity = mesh.opacity
+							})
+						end
 					end
 				end
 			end
