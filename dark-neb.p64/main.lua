@@ -81,6 +81,10 @@ local target_heading_dir = {x = 0, z = 1}
 local rotation_start_dir = {x = 0, z = 1}  -- Starting direction when rotation begins
 local rotation_progress = 0  -- Accumulator for SLERP (0 to 1)
 
+-- Camera heading control - using direction vectors for yaw (XZ plane, like ship)
+local camera_heading_dir = {x = 0, z = 1}  -- Current camera yaw direction
+local camera_target_heading_dir = {x = 0, z = 1}  -- Target camera yaw direction
+
 -- Raycast intersection for visualization
 local raycast_x = nil
 local raycast_z = nil
@@ -1070,32 +1074,73 @@ function _update()
 		end
 	end
 
-	-- Smooth camera rotation (lerp towards target)
+	camera_heading_dir = {x= sin(camera.ry), z = cos(camera.ry)}
+	-- Smooth camera rotation (using direction vectors like the ship)
 	-- If satellite is targeted, aim camera at it instead of free rotation
-	if camera_locked_to_target and selected_target == "satellite" and model_satellite and satellite_pos then
+	if camera_locked_to_target then
 		local sat_pos = satellite_pos
 		local ship_pos = Config.ship.position
 
-		-- Calculate direction from ship to satellite
+	
+
+		-- Calculate target direction from ship to satellite (normalized)
 		local dx = sat_pos.x - ship_pos.x
 		local dz = sat_pos.z - ship_pos.z
-
-		-- Normalize direction vector (use normalize function from MathUtils)
 		local direction = MathUtils.normalize(vec(dx, 0, dz))
-		dx = direction.x
-		dz = direction.z
+		camera_target_heading_dir = {x = direction.x, z = direction.z}
 
-		-- Calculate yaw (direction to satellite in XZ plane) - point camera at target
-		local sat_yaw = atan2(dx, dz)
+		-- Rotate camera heading toward target using atan2 with shortest path
+		-- camera_heading_dir is the persistent source of truth
+		local current_angle = atan2(camera_heading_dir.x, camera_heading_dir.z)
+		local target_angle = atan2(camera_target_heading_dir.x, camera_target_heading_dir.z)
 
-		-- Only update yaw to face satellite, preserve pitch from before targeting
-		target_ry = sat_yaw
-		target_rx = camera_pitch_before_targeting or 0  -- Use saved pitch, or 0 if not set
+		-- Calculate shortest angular difference (wraps around 0/1 boundary)
+		local angle_diff = target_angle - current_angle
+		if angle_diff > 0.5 then
+			angle_diff = angle_diff - 1
+		elseif angle_diff < -0.5 then
+			angle_diff = angle_diff + 1
+		end
+
+		-- DEBUG OUTPUT
+		printh("=== CAMERA TARGET LOCK ===")
+		printh("target_dir: (" .. flr(camera_target_heading_dir.x*1000)/1000 .. "," .. flr(camera_target_heading_dir.z*1000)/1000 .. ")")
+		printh("current_dir: (" .. flr(camera_heading_dir.x*1000)/1000 .. "," .. flr(camera_heading_dir.z*1000)/1000 .. ")")
+		printh("current_angle: " .. flr(current_angle*10000)/10000)
+		printh("target_angle: " .. flr(target_angle*10000)/10000)
+		printh("angle_diff: " .. flr(angle_diff*10000)/10000)
+
+		-- Only rotate if not already at target (tolerance: 0.0001 turns)
+		if abs(angle_diff) > 0.0001 then
+			-- Rotate toward target with smooth interpolation
+			local smoothing = 0.2  -- Smoothing factor - how much of the angle_diff to close each frame
+			local rotation_amount = angle_diff * smoothing  -- Move a fraction of the remaining distance
+
+			printh("rotation_amount: " .. flr(rotation_amount*10000)/10000)
+
+			-- Apply rotation to current angle
+			local new_angle = current_angle + rotation_amount
+
+			-- Update camera.ry to match (for compatibility with camera system)
+			camera.ry = new_angle
+
+			printh("new_angle: " .. flr(new_angle*10000)/10000)
+		end
+
+		-- Preserve pitch from before targeting
+		target_ry = camera.ry
+		target_rx = camera_pitch_before_targeting or 0
 	end
 
-	local smoothing = 0.2  -- Lower = smoother (0.1-0.3 range)
+	-- Apply camera smoothing (but skip yaw if locked to target, since it's handled directly above)
+	local smoothing = 0.2  -- Default smoothing for free look (0.1-0.3 range)
+
 	camera.rx = camera.rx + (target_rx - camera.rx) * smoothing
-	camera.ry = camera.ry + (target_ry - camera.ry) * smoothing
+
+	-- Only apply yaw smoothing if NOT locked to target (target lock handles rotation directly)
+	if not camera_locked_to_target then
+		camera.ry = camera.ry + (target_ry - camera.ry) * smoothing
+	end
 
 	-- Smooth ship speed (lerp towards target)
 	ship_speed = ship_speed + (target_ship_speed - ship_speed) * Config.ship.speed_smoothing
@@ -1591,11 +1636,26 @@ function _draw()
 		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
 	end
 
-	-- Draw debug line from ship to satellite when targeted
-	if camera_locked_to_target and selected_target == "satellite" and model_satellite and satellite_pos then
-		local ship_pos = Config.ship.position
+	local ship_pos = Config.ship.position
+	local heading_length = 20
+	local current_heading_end_x = ship_pos.x + camera_heading_dir.x * heading_length
+	local current_heading_end_z = ship_pos.z + camera_heading_dir.z * heading_length
+	draw_line_3d(ship_pos.x, ship_pos.y + 3, ship_pos.z, current_heading_end_x, ship_pos.y + 3, current_heading_end_z, camera, 12)  -- Bright magenta
+
+	-- Draw camera heading direction visualization when locked to target
+	if selected_target  then
+		
 		local sat_pos = satellite_pos
+
+		-- Draw line from ship to satellite (target line)
 		draw_line_3d(ship_pos.x, ship_pos.y, ship_pos.z, sat_pos.x, sat_pos.y, sat_pos.z, camera, 11)
+
+		-- Draw camera current heading direction (from ship in camera heading direction)
+
+		-- Draw camera target heading direction (to satellite direction)
+		local target_heading_end_x = ship_pos.x + camera_target_heading_dir.x * heading_length
+		local target_heading_end_z = ship_pos.z + camera_target_heading_dir.z * heading_length
+		draw_line_3d(ship_pos.x, ship_pos.y + 2, ship_pos.z, target_heading_end_x, ship_pos.y + 2, target_heading_end_z, camera, 10)  -- Bright yellow
 	end
 
 	-- Draw speed slider

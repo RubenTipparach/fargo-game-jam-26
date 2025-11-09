@@ -38,6 +38,7 @@ Config.camera = {
 	ry = -0.36,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
 	render_distance = 200,  -- Maximum distance for rendering objects
+	turn_rate = 0.0015,  -- Camera turn rate during target lock (turns per frame, higher = faster)
 }
 
 -- Ship/Model configuration
