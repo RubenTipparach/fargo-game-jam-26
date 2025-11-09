@@ -146,17 +146,17 @@ end
 
 init_weapon_states()
 
--- Check if a weapon is ready to fire
+-- Check if a weapon is ready to fire (charged and has a target)
 -- @param weapon_id: weapon index (1-based)
--- @return: true if weapon is charged and has a target, false otherwise
-function is_weapon_ready(weapon_id)
-	if not current_selected_target then
-		printh("DEBUG is_weapon_ready: No target selected")
+-- @param target: target object to check (passed explicitly to avoid global issues)
+-- @return: true if weapon is fully charged and target is selected, false otherwise
+function is_weapon_ready(weapon_id, target)
+	local state = weapon_states[weapon_id]
+
+	if not target then
 		return false  -- No target selected
 	end
 
-	local state = weapon_states[weapon_id]
-	printh("DEBUG is_weapon_ready: weapon_id=" .. weapon_id .. ", current_target=" .. (current_selected_target.id or "unknown") .. ", charge=" .. state.charge)
 	if state.charge < 0.999 then
 		return false  -- Weapon not fully charged
 	end
@@ -621,6 +621,16 @@ local function draw_box_wireframe(min_x, min_y, min_z, max_x, max_y, max_z, came
 	end
 end
 
+-- Draw 2D screen-space bounding box around a 3D object
+-- Projects the object center and draws a rectangle on screen
+local function draw_2d_selection_box(world_x, world_y, world_z, camera, color, size)
+	size = size or 20  -- Default size in pixels
+	local screen_x, screen_y = project_point(world_x, world_y, world_z, camera)
+	if screen_x and screen_y then
+		-- Draw rectangle around the projected point
+		rect(screen_x - size, screen_y - size, size * 2, size * 2, color)
+	end
+end
 
 -- Box vs Sphere collision detection
 -- Returns true if colliding
@@ -1115,7 +1125,10 @@ function handle_energy_clicks(mx, my)
 	return false
 end
 
+local _update_frame_counter = 0
+
 function _update()
+	_update_frame_counter = _update_frame_counter + 1
 	-- Mouse input (used for menu and gameplay)
 	mx, my, mb = mouse()
 
@@ -1204,7 +1217,7 @@ function _update()
 
 					if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
 						target_pos = current_selected_target.position
-						target_ref = current_selected_target.config
+						target_ref = current_selected_target  -- Pass enemy object, not config
 					elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 						target_pos = Config.planet.position
 						target_ref = Config.planet
@@ -1320,7 +1333,8 @@ function _update()
 			current_selected_target = hovered_target
 			camera_locked_to_target = true
 			camera_pitch_before_targeting = camera.rx  -- Save current pitch
-			printh("Satellite selected as target!")
+			printh("Satellite selected as target! ID=" .. current_selected_target.id)
+			printh("DEBUG: current_selected_target IS SET after right-click")
 		elseif raycast_x and raycast_z then
 			-- Only set ship heading if we have a valid crosshair (raycast succeeded)
 			printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
@@ -1460,10 +1474,18 @@ function _update()
 		end
 	end
 
+	-- DEBUG: Check target status before auto-fire
+	if current_selected_target then
+		printh("[F" .. _update_frame_counter .. "] DEBUG PRE-AUTOFIRE: current_selected_target = " .. current_selected_target.id)
+	else
+		printh("[F" .. _update_frame_counter .. "] DEBUG PRE-AUTOFIRE: current_selected_target = nil")
+	end
+
 	-- Handle auto-fire for weapons with auto-fire enabled
 	for i = 1, #Config.weapons do
 		local state = weapon_states[i]
-		if state.auto_fire and is_weapon_ready(i) then
+		if state.auto_fire and is_weapon_ready(i, current_selected_target) then
+			printh("FIRE CHECK: Weapon " .. i .. " is ready!")
 			-- Fire the weapon
 			local target_pos = nil
 			local target_ref = nil
@@ -1487,6 +1509,12 @@ function _update()
 				state.charge = 0
 
 				printh("Auto-fire: Weapon " .. i .. " fired at target")
+			end
+		elseif state.auto_fire then
+			if not current_selected_target then
+				printh("DEBUG: Weapon " .. i .. " - NO TARGET (target still nil)")
+			else
+				printh("DEBUG: Weapon " .. i .. " - NOT CHARGED (charge=" .. flr(state.charge*1000)/1000 .. ")")
 			end
 		end
 	end
@@ -1849,12 +1877,12 @@ function _update()
 				{
 					quad_count = 1,
 					sprite_id = 17,
-					lifetime = 0.5,        -- Longer visible duration
-					initial_scale = 1.0,
-					max_scale = 8.0,       -- Large explosion like player ship
-					speed_up_time = 0.15,
-					slowdown_time = 0.35,
-					slow_growth_factor = 0.15,
+					lifetime = 0.3,        -- Longer visible duration
+					initial_scale = 0.5,
+					max_scale = 2.5,       -- Smaller explosion for enemy ships
+					speed_up_time = 0.1,
+					slowdown_time = 0.2,
+					slow_growth_factor = 0.1,
 				}
 			)
 			table.insert(active_explosions, explosion)
@@ -2362,25 +2390,17 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
-	-- Draw all satellite bounding boxes (skip if destroyed)
+	-- Draw 2D selection indicators for satellites
 	for _, enemy in ipairs(enemy_ships) do
 		if enemy.type == "satellite" and model_satellite and enemy.position and not enemy.is_destroyed then
-			local sat_collider = enemy.config.collider
-			local sat_pos = enemy.position
-			local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
-			local sat_box_min_y = sat_pos.y - sat_collider.half_size.y
-			local sat_box_min_z = sat_pos.z - sat_collider.half_size.z
-			local sat_box_max_x = sat_pos.x + sat_collider.half_size.x
-			local sat_box_max_y = sat_pos.y + sat_collider.half_size.y
-			local sat_box_max_z = sat_pos.z + sat_collider.half_size.z
-
 			-- Choose color based on state: yellow if targeted or hovered, blue by default
 			local is_targeted = current_selected_target and current_selected_target == enemy
 			local is_hovered = hovered_target and hovered_target == enemy
 			local sat_box_color = (is_targeted or is_hovered) and enemy.config.bounding_box_color_hover or enemy.config.bounding_box_color_default
 
-			draw_box_wireframe(sat_box_min_x, sat_box_min_y, sat_box_min_z,
-			                   sat_box_max_x, sat_box_max_y, sat_box_max_z, camera, sat_box_color)
+			-- Draw 2D bounding box around satellite on screen
+			local box_size = is_targeted and 25 or 20  -- Slightly larger when targeted
+			draw_2d_selection_box(enemy.position.x, enemy.position.y, enemy.position.z, camera, sat_box_color, box_size)
 		end
 	end
 
