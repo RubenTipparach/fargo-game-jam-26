@@ -273,14 +273,14 @@ Config.energy = {
 Config.missions = {
 	-- Mission 1: Tutorial/Starting mission
 	mission_1 = {
-		name = "Mission 1: Escort",
-		description = "Protect the satellite",
+		name = "Mission 1: Tutotrial",
+		description = "Destroy the satellite",
 		ship_start = {x = 0, y = 0, z = 0},
-		satellite_start = {x = -30, y = 0, z = -40},
+		satellite_start = {x = -30, y = 0, z = 40},
 		planet_start = {x = 50, y = 0, z = 0},
 		objectives = {
 			{
-				type = "protect",
+				type = "destroy",
 				target = "satellite",
 				min_health_percent = 50,  -- Keep satellite above 50% health
 			},

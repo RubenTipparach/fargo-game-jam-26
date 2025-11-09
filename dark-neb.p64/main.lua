@@ -2144,14 +2144,6 @@ function _draw()
 	}
 	WeaponEffects.draw(camera, utilities)
 
-	-- Draw debug lines for active beams (always visible)
-	local active_beams = WeaponEffects.get_beams()
-	for _, beam in ipairs(active_beams) do
-		-- Draw a bright magenta line from beam start to end
-		draw_line_3d(beam.start_pos.x, beam.start_pos.y, beam.start_pos.z,
-					 beam.end_pos.x, beam.end_pos.y, beam.end_pos.z, camera, 13)  -- Bright magenta
-	end
-
 	-- Draw weapons UI
 	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my)
 

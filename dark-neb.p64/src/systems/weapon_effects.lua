@@ -76,7 +76,7 @@ function Beam:update(dt)
 end
 
 -- Get mesh face for rendering
-function Beam:get_mesh_face(camera)
+function Beam:get_mesh_face()
 	-- Calculate beam direction and length
 	local dx = self.end_pos.x - self.start_pos.x
 	local dy = self.end_pos.y - self.start_pos.y
@@ -92,59 +92,72 @@ function Beam:get_mesh_face(camera)
 	dy = dy / beam_length
 	dz = dz / beam_length
 
-	-- Calculate camera right and up vectors for billboarding
-	local right_x = cos(camera.ry)
-	local right_y = 0
-	local right_z = -sin(camera.ry)
+	-- Create first perpendicular vector to beam direction, in XZ plane
+	-- This keeps the beam flat on the XZ plane (horizontal width)
+	local perp1_x = -dz
+	local perp1_z = dx
 
-	-- Camera forward for up vector
-	local forward_x = sin(camera.ry) * cos(camera.rx)
-	local forward_y = sin(camera.rx)
-	local forward_z = cos(camera.ry) * cos(camera.rx)
-
-	local up_x = -(forward_y * right_z - forward_z * right_y)
-	local up_y = -(forward_z * right_x - forward_x * right_z)
-	local up_z = -(forward_x * right_y - forward_y * right_x)
-
-	-- Normalize up vector
-	local up_len = sqrt(up_x*up_x + up_y*up_y + up_z*up_z)
-	if up_len > 0 then
-		up_x = up_x / up_len
-		up_y = up_y / up_len
-		up_z = up_z / up_len
-	end
-
-	-- Calculate perpendicular vectors to beam direction
-	-- Use cross product of beam direction and up to get true perpendicular
-	local perp_x = forward_y * dz - forward_z * dy
-	local perp_y = forward_z * dx - forward_x * dz
-	local perp_z = forward_x * dy - forward_y * dx
-
-	local perp_len = sqrt(perp_x*perp_x + perp_y*perp_y + perp_z*perp_z)
+	-- Normalize perpendicular vector 1
+	local perp_len = sqrt(perp1_x*perp1_x + perp1_z*perp1_z)
 	if perp_len > 0 then
-		perp_x = perp_x / perp_len
-		perp_y = perp_y / perp_len
-		perp_z = perp_z / perp_len
+		perp1_x = perp1_x / perp_len
+		perp1_z = perp1_z / perp_len
 	end
 
-	local half_size = self.width
+	-- Create second perpendicular vector (cross product: beam_dir × perp1)
+	-- This gives us a perpendicular that's perpendicular to both beam and perp1
+	local perp2_x = dy * perp1_z - dz * perp1_x
+	local perp2_y = dz * perp1_x - dx * perp1_z
+	local perp2_z = dx * 0 - dy * perp1_x  -- Note: simplified cross product
+
+	-- Actually, let's compute it correctly: cross(beam_dir, perp1)
+	-- beam = (dx, dy, dz), perp1 = (perp1_x, 0, perp1_z)
+	-- cross = (dy * perp1_z - dz * 0, dz * perp1_x - dx * perp1_z, dx * 0 - dy * perp1_x)
+	perp2_x = dy * perp1_z
+	perp2_y = dz * perp1_x - dx * perp1_z
+	perp2_z = -dy * perp1_x
+
+	-- Normalize perpendicular vector 2
+	local perp2_len = sqrt(perp2_x*perp2_x + perp2_y*perp2_y + perp2_z*perp2_z)
+	if perp2_len > 0 then
+		perp2_x = perp2_x / perp2_len
+		perp2_y = perp2_y / perp2_len
+		perp2_z = perp2_z / perp2_len
+	end
+
+	local half_width = self.width / 2
+	local half_length = beam_length / 2
 
 	-- Calculate midpoint
 	local mid_x = (self.start_pos.x + self.end_pos.x) / 2
 	local mid_y = (self.start_pos.y + self.end_pos.y) / 2
 	local mid_z = (self.start_pos.z + self.end_pos.z) / 2
 
-	-- Create beam quad vertices along the beam line
-	-- The beam stretches from start to end, perpendicular to camera view
+	-- Create beam quad vertices centered at midpoint
+	-- Two perpendicular quads for visibility from all angles
+	-- Quad 1: Uses perp1 (XZ plane perpendicular)
+	-- Quad 2: Uses perp2 (truly perpendicular to both beam and perp1)
+	-- Vertices relative to midpoint:
 	local verts = {
-		-- Start point, bottom-left
-		{x = self.start_pos.x - perp_x * half_size, y = self.start_pos.y - perp_y * half_size, z = self.start_pos.z - perp_z * half_size},
-		-- Start point, bottom-right
-		{x = self.start_pos.x + perp_x * half_size, y = self.start_pos.y + perp_y * half_size, z = self.start_pos.z + perp_z * half_size},
-		-- End point, bottom-right
-		{x = self.end_pos.x + perp_x * half_size, y = self.end_pos.y + perp_y * half_size, z = self.end_pos.z + perp_z * half_size},
-		-- End point, bottom-left
-		{x = self.end_pos.x - perp_x * half_size, y = self.end_pos.y - perp_y * half_size, z = self.end_pos.z - perp_z * half_size},
+		-- Quad 1: First perpendicular direction
+		-- Start point, left (relative to midpoint, so negate to go backward)
+		{x = -dx * half_length - perp1_x * half_width, y = -dy * half_length, z = -dz * half_length - perp1_z * half_width},
+		-- Start point, right
+		{x = -dx * half_length + perp1_x * half_width, y = -dy * half_length, z = -dz * half_length + perp1_z * half_width},
+		-- End point, right (positive direction from midpoint)
+		{x = dx * half_length + perp1_x * half_width, y = dy * half_length, z = dz * half_length + perp1_z * half_width},
+		-- End point, left
+		{x = dx * half_length - perp1_x * half_width, y = dy * half_length, z = dz * half_length - perp1_z * half_width},
+
+		-- Quad 2: Second perpendicular direction (cross product of beam and perp1)
+		-- Start point, bottom (relative to midpoint, so negate to go backward)
+		{x = -dx * half_length - perp2_x * half_width, y = -dy * half_length - perp2_y * half_width, z = -dz * half_length - perp2_z * half_width},
+		-- Start point, top
+		{x = -dx * half_length + perp2_x * half_width, y = -dy * half_length + perp2_y * half_width, z = -dz * half_length + perp2_z * half_width},
+		-- End point, top (positive direction from midpoint)
+		{x = dx * half_length + perp2_x * half_width, y = dy * half_length + perp2_y * half_width, z = dz * half_length + perp2_z * half_width},
+		-- End point, bottom
+		{x = dx * half_length - perp2_x * half_width, y = dy * half_length - perp2_y * half_width, z = dz * half_length - perp2_z * half_width},
 	}
 
 	-- Fade progress for beam fade-out effect
@@ -152,9 +165,32 @@ function Beam:get_mesh_face(camera)
 	local opacity = max(0, 1.0 - fade_progress)
 
 	local faces = {
-		{1, 2, 3, self.sprite_id, vec(0,0), vec(16,0), vec(16,16)},
-		{1, 3, 4, self.sprite_id, vec(0,0), vec(16,16), vec(0,16)}
+		-- Quad 1: XZ plane - both facing directions for visibility from any angle
+		{1, 2, 3, self.sprite_id, vec(16,0), vec(16,16), vec(0,16)},
+		{1, 3, 4, self.sprite_id, vec(16,0), vec(0,16), vec(0,0)},
+		-- Reverse winding for back faces
+		{3, 2, 1, self.sprite_id, vec(0,16), vec(16,16), vec(16,0)},
+		{4, 3, 1, self.sprite_id, vec(0,0), vec(0,16), vec(16,0)},
+
+		-- Quad 2: Y axis - both facing directions for visibility from any angle
+		{5, 6, 7, self.sprite_id, vec(16,0), vec(16,16), vec(0,16)},
+		{5, 7, 8, self.sprite_id, vec(16,0), vec(0,16), vec(0,0)},
+		-- Reverse winding for back faces
+		{7, 6, 5, self.sprite_id, vec(0,16), vec(16,16), vec(16,0)},
+		{8, 7, 5, self.sprite_id, vec(0,0), vec(0,16), vec(16,0)}
 	}
+
+	-- Debug: Print beam info
+	printh("=== BEAM ===")
+	printh("Start: " .. self.start_pos.x .. ", " .. self.start_pos.y .. ", " .. self.start_pos.z)
+	printh("End: " .. self.end_pos.x .. ", " .. self.end_pos.y .. ", " .. self.end_pos.z)
+	printh("Dir: " .. dx .. ", " .. dy .. ", " .. dz .. " (len=" .. beam_length .. ")")
+	printh("Perp1: " .. perp1_x .. ", 0, " .. perp1_z)
+	printh("Perp2: " .. perp2_x .. ", " .. perp2_y .. ", " .. perp2_z)
+	printh("Midpoint: " .. mid_x .. ", " .. mid_y .. ", " .. mid_z)
+	for i, v in ipairs(verts) do
+		printh("V" .. i .. ": " .. v.x .. ", " .. v.y .. ", " .. v.z)
+	end
 
 	return {
 		verts = verts,
@@ -324,7 +360,7 @@ local function build_beam_quad(start_pos, end_pos, camera, sprite_id, width)
 	}
 end
 
--- Project a world-space vertex to screen space (same as main Renderer)
+-- Project a world-space vertex to screen space (used by explosions and smoke)
 local function project_vertex(world_pos, camera)
 	local PROJ_SCALE = 270 / 0.7002075
 	local NEAR_PLANE = 0.01
@@ -362,16 +398,21 @@ local function project_vertex(world_pos, camera)
 		y = py,
 		z = 0,
 		w = inv_z,
-		depth = z3
+		depth = z3,
+		cam_x = x2,
+		cam_y = y2,
+		cam_z = z3
 	}
 end
 
--- Render beams and add to face list (same pattern as ExplosionRenderer)
+-- Render beams and add to face list
+-- ClipSpace culling in renderer_lit will handle near plane clipping
 function WeaponEffects.render_beams(camera, all_faces)
 	for _, beam in ipairs(beams) do
 		if beam.active then
-			local mesh = beam:get_mesh_face(camera)
+			local mesh = beam:get_mesh_face()
 			if mesh then
+				-- Process each face in the beam mesh individually
 				for i = 1, #mesh.faces do
 					local face = mesh.faces[i]
 					local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
@@ -389,7 +430,7 @@ function WeaponEffects.render_beams(camera, all_faces)
 					local p2 = project_vertex(w2, camera)
 					local p3 = project_vertex(w3, camera)
 
-					-- Only add face if all vertices are in front of camera
+					-- Only add face if all vertices project to screen
 					if p1 and p2 and p3 then
 						-- Calculate average depth
 						local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333
@@ -400,8 +441,8 @@ function WeaponEffects.render_beams(camera, all_faces)
 							p1 = p1,
 							p2 = p2,
 							p3 = p3,
-							dither_opacity = mesh.opacity,  -- Apply beam fade effect
-							unlit = true
+							unlit = true,
+							dither_opacity = mesh.opacity
 						})
 					end
 				end
@@ -566,9 +607,9 @@ end
 
 -- Update autonomous smoke spawners (called from main update loop)
 function WeaponEffects.update_smoke_spawners(dt)
-	if #smoke_spawners > 0 then
-		printh("UPDATE_SMOKE_SPAWNERS: " .. #smoke_spawners .. " spawners active")
-	end
+	-- if #smoke_spawners > 0 then
+	-- 	printh("UPDATE_SMOKE_SPAWNERS: " .. #smoke_spawners .. " spawners active")
+	-- end
 
 	for i = #smoke_spawners, 1, -1 do
 		local spawner = smoke_spawners[i]
@@ -579,9 +620,9 @@ function WeaponEffects.update_smoke_spawners(dt)
 		else
 			local health_ratio = spawner.object.current_health / spawner.object.max_health
 
-			if #smoke_spawners > 0 then
-				printh("  Spawner health: " .. health_ratio .. " threshold: " .. spawner.health_threshold)
-			end
+			-- if #smoke_spawners > 0 then
+			-- 	printh("  Spawner health: " .. health_ratio .. " threshold: " .. spawner.health_threshold)
+			-- end
 
 			-- If below threshold and max particles not reached, spawn smoke
 			if health_ratio < spawner.health_threshold then

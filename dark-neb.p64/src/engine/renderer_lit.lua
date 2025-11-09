@@ -11,6 +11,7 @@ RendererLit.profiler = nil
 local Lighting = require("src.lighting")
 local MathUtils = require("src.engine.math_utils")
 local Frustum = require("src.engine.frustum")
+local ClipSpace = require("src.engine.clip_space")
 
 -- ============================================
 -- COLOR TABLE SPRITE CACHING
@@ -578,6 +579,7 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 	-- Allocate arrays for vertex processing
 	local projected = {}
 	local depths = {}
+	local view_space = {}
 
 	-- Precompute rotation values
 	local cos_ry, sin_ry = cos(camera.ry), sin(camera.ry)
@@ -759,12 +761,18 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 			local y2 = vert_data:get(1, i-1)
 			local z3 = vert_data:get(2, i-1)
 
-			-- Perspective projection
+			-- Store view-space vertex (before projection)
+			-- Negate x and y to match screen coordinate system
+			-- w = z for perspective division later (used by ClipSpace)
+			view_space[i] = {x = -x2, y = -y2, z = z3, w = z3}
+
+			-- Only project if in front of near plane
 			if z3 > near then
 				local inv_z = 1 / z3
 				local px = -x2 * inv_z * proj_scale + 240
 				local py = -y2 * inv_z * proj_scale + 135
 
+				-- Store projected vertex
 				projected[i] = {x=px, y=py, z=0, w=inv_z}
 				depths[i] = z3
 			else
@@ -785,47 +793,69 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 	for i = 1, #faces do
 		local face = faces[i]
 		local v1_idx, v2_idx, v3_idx = face[1], face[2], face[3]
-		local p1, p2, p3 = projected[v1_idx], projected[v2_idx], projected[v3_idx]
+		local uv1, uv2, uv3 = face[5], face[6], face[7]
 
-		if p1 and p2 and p3 then
-			local d1, d2, d3 = depths[v1_idx], depths[v2_idx], depths[v3_idx]
+		-- Get view-space vertices for ClipSpace
+		local vs1 = view_space[v1_idx]
+		local vs2 = view_space[v2_idx]
+		local vs3 = view_space[v3_idx]
 
-			-- Fast screen-space backface culling (2D cross product)
-			local cross = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x)
+		-- Apply near plane clipping via ClipSpace module (operates in view space)
+		local clipped_tris = ClipSpace.cull_and_clip_triangle(
+			vs1, vs2, vs3,
+			uv1, uv2, uv3
+		)
 
-			-- Only include if facing towards camera (clockwise winding in screen space)
-			if cross > 0 or skip_culling then
-				-- Calculate average depth for sorting
-				local avg_depth = (d1 + d2 + d3) * 0.333333 + depth_bias
+		-- Process each clipped triangle (usually 1, sometimes 2 if partially clipped)
+		for _, clipped_tri in ipairs(clipped_tris) do
+			local cp1, cp2, cp3 = clipped_tri[1], clipped_tri[2], clipped_tri[3]
+			local cuv1, cuv2, cuv3 = clipped_tri[4], clipped_tri[5], clipped_tri[6]
 
-				-- Calculate fog opacity (simplified - no fog for simple cubes)
-				local fog_opacity = 0
+			-- Project clipped vertices to screen space
+			-- Clipped vertices are in view space: {x, y, z, w} where w=1
+			if cp1.z > near and cp2.z > near and cp3.z > near then
+				-- Apply perspective division to convert from view space to NDC
+				local p1 = ClipSpace.perspective_divide(cp1)
+				local p2 = ClipSpace.perspective_divide(cp2)
+				local p3 = ClipSpace.perspective_divide(cp3)
 
-				-- Create face entry with per-face brightness (flat shading)
-				-- Format: {v1, v2, v3, sprite, uv1, uv2, uv3}
-				local sprite_a = sprite_id or face[4]
-				local uv1, uv2, uv3 = face[5], face[6], face[7]
+				-- Convert NDC to screen space
+				local sp1 = {x = p1.x * proj_scale + 240, y = p1.y * proj_scale + 135, z = 0, w = p1.w}
+				local sp2 = {x = p2.x * proj_scale + 240, y = p2.y * proj_scale + 135, z = 0, w = p2.w}
+				local sp3 = {x = p3.x * proj_scale + 240, y = p3.y * proj_scale + 135, z = 0, w = p3.w}
 
-				-- Get face brightness (same for all 3 vertices = flat shading)
-				local brightness = face_brightness[i]
+				-- Fast screen-space backface culling (2D cross product)
+				local cross = (sp2.x - sp1.x) * (sp3.y - sp1.y) - (sp2.y - sp1.y) * (sp3.x - sp1.x)
 
-				local face_data = {
-					face = {face[1], face[2], face[3], sprite_a, uv1, uv2, uv3},
-					depth = avg_depth,
-					p1 = p1,
-					p2 = p2,
-					p3 = p3,
-					fog = fog_opacity,
-				}
+				-- Only include if facing towards camera (clockwise winding in screen space)
+				if cross > 0 or skip_culling then
+					-- Calculate average depth for sorting
+					local avg_depth = (cp1.z + cp2.z + cp3.z) * 0.333333 + depth_bias
 
-				-- Only add brightness for lit faces; unlit faces skip this so draw_faces knows to render without lighting
-				if not face.unlit then
-					face_data.b1 = brightness
-					face_data.b2 = brightness
-					face_data.b3 = brightness
+					-- Create face entry with per-face brightness (flat shading)
+					local sprite_a = sprite_id or face[4]
+
+					-- Get face brightness (same for all 3 vertices = flat shading)
+					local brightness = face_brightness[i]
+
+					local face_data = {
+						face = {face[1], face[2], face[3], sprite_a, cuv1, cuv2, cuv3},
+						depth = avg_depth,
+						p1 = sp1,
+						p2 = sp2,
+						p3 = sp3,
+						fog = 0,
+					}
+
+					-- Only add brightness for lit faces; unlit faces skip this so draw_faces knows to render without lighting
+					if not face.unlit then
+						face_data.b1 = brightness
+						face_data.b2 = brightness
+						face_data.b3 = brightness
+					end
+
+					add(projected_faces, face_data)
 				end
-
-				add(projected_faces, face_data)
 			end
 		end
 	end
