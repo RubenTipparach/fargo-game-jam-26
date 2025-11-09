@@ -146,6 +146,23 @@ end
 
 init_weapon_states()
 
+-- Check if a weapon is ready to fire
+-- @param weapon_id: weapon index (1-based)
+-- @return: true if weapon is charged and has a target, false otherwise
+function is_weapon_ready(weapon_id)
+	if not selected_target then
+		return false  -- No target selected
+	end
+
+	local state = weapon_states[weapon_id]
+	if not state or state.charge < 1.0 then
+		return false  -- Weapon not fully charged
+	end
+
+	-- Add more conditions here as needed (e.g., cooldown, overheat, etc.)
+	return true
+end
+
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
 function generate_stars()
@@ -1409,6 +1426,37 @@ function _update()
 		else
 			-- Stop charging if no energy
 			state.charge = 0
+		end
+	end
+
+	-- Handle auto-fire for weapons with auto-fire enabled
+	for i = 1, #Config.weapons do
+		local state = weapon_states[i]
+		if state.auto_fire and is_weapon_ready(i) then
+			-- Fire the weapon
+			local target_pos = nil
+			local target_ref = nil
+
+			if selected_target == "satellite" and model_satellite and satellite_pos then
+				target_pos = satellite_pos  -- Use current rendered position
+				target_ref = Config.satellite
+			elseif selected_target == "planet" and model_planet then
+				target_pos = Config.planet.position
+				target_ref = Config.planet
+			end
+
+			if target_pos and target_ref and ship_pos then
+				-- Fire beam
+				WeaponEffects.fire_beam(ship_pos, target_pos)
+
+				-- Spawn explosion at target (damage is applied in spawn_explosion)
+				WeaponEffects.spawn_explosion(target_pos, target_ref)
+
+				-- Reset weapon charge after firing
+				state.charge = 0
+
+				printh("Auto-fire: Weapon " .. i .. " fired at target")
+			end
 		end
 	end
 
