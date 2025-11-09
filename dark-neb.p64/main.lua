@@ -737,39 +737,80 @@ function create_sphere(radius, segments, stacks, sprite_id, sprite_w, sprite_h)
 	return {verts = verts, faces = faces, name = "sphere"}
 end
 
--- Create a simple quad mesh (single rectangle, 64x64 unlit)
-function create_quad(width, height, sprite_id, sprite_w, sprite_h)
+-- Create billboard-facing quad vertices based on camera orientation
+function create_billboard_quad(half_size, camera)
+	-- Camera forward vector (direction camera is looking)
+	local forward_x = sin(camera.ry) * cos(camera.rx)
+	local forward_y = sin(camera.rx)  -- Inverted pitch
+	local forward_z = cos(camera.ry) * cos(camera.rx)
+
+	-- Camera right vector (perpendicular to forward, in XZ plane)
+	local right_x = cos(camera.ry)
+	local right_y = 0
+	local right_z = -sin(camera.ry)
+
+	-- Camera up vector (cross product of forward and right, inverted)
+	local up_x = -(forward_y * right_z - forward_z * right_y)
+	local up_y = -(forward_z * right_x - forward_x * right_z)
+	local up_z = -(forward_x * right_y - forward_y * right_x)
+
+	-- Build quad vertices using right and up vectors
+	local verts = {
+		vec(-right_x * half_size + up_x * half_size, -right_y * half_size + up_y * half_size, -right_z * half_size + up_z * half_size),  -- Top-left
+		vec(right_x * half_size + up_x * half_size, right_y * half_size + up_y * half_size, right_z * half_size + up_z * half_size),    -- Top-right
+		vec(right_x * half_size - up_x * half_size, right_y * half_size - up_y * half_size, right_z * half_size - up_z * half_size),    -- Bottom-right
+		vec(-right_x * half_size - up_x * half_size, -right_y * half_size - up_y * half_size, -right_z * half_size - up_z * half_size),  -- Bottom-left
+	}
+
+	return verts
+end
+
+-- Create a billboard quad mesh (64x64 unlit, camera-facing)
+function create_quad(width, height, sprite_id, sprite_w, sprite_h, camera)
 	sprite_id = sprite_id or 1
 	sprite_w = sprite_w or 64
 	sprite_h = sprite_h or 64
 
-	-- Create 4 vertices for a quad (centered at origin)
+	-- For billboards, store half-size and mark as billboard - vertices will be generated each frame
 	local hw = width / 2
 	local hh = height / 2
+
+	-- Create dummy vertices (will be regenerated every frame for billboards)
 	local verts = {
-		vec(-hw, -hh, 0),  -- Bottom-left
-		vec(hw, -hh, 0),   -- Bottom-right
-		vec(hw, hh, 0),    -- Top-right
-		vec(-hw, hh, 0),   -- Top-left
+		vec(-hw, -hh, 0),
+		vec(hw, -hh, 0),
+		vec(hw, hh, 0),
+		vec(-hw, hh, 0),
 	}
 
 	-- Create 2 triangles to form the quad
 	local faces = {
-		-- First triangle (0, 1, 2)
+		-- First triangle (1, 2, 3)
 		{1, 2, 3, sprite_id,
 			vec(0, sprite_h), vec(sprite_w, sprite_h), vec(sprite_w, 0)},
-		-- Second triangle (0, 2, 3)
+		-- Second triangle (1, 3, 4)
 		{1, 3, 4, sprite_id,
 			vec(0, sprite_h), vec(sprite_w, 0), vec(0, 0)},
 	}
 
-	return {verts = verts, faces = faces, name = "quad", unlit = true}
+	return {verts = verts, faces = faces, name = "quad", unlit = true, is_billboard = true, half_size = hw}
 end
 
--- Spawn a quad at the given position
-function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h)
-	local quad_mesh = create_quad(width or 5, height or 5, sprite_id or 19, sprite_w, sprite_h)
-	add(spawned_spheres, {x = x, y = y, z = z, mesh = quad_mesh})
+-- Spawn a billboard quad at the given position (faces camera)
+-- lifetime: optional duration in seconds before quad is removed (nil = infinite)
+-- dither_enabled: optional boolean to enable dither fading based on lifetime
+function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h, camera_obj, lifetime, dither_enabled)
+	local quad_mesh = create_quad(width or 10, height or 10, sprite_id or 19, sprite_w, sprite_h, camera_obj or camera)
+	local hw = (width or 10) / 2
+	local obj = {
+		x = x, y = y, z = z,
+		mesh = quad_mesh,
+		mesh_half_size = hw,
+		lifetime = lifetime,  -- Lifetime in seconds (nil = infinite)
+		age = 0,  -- Current age in seconds
+		dither_enabled = dither_enabled or false  -- Enable dither fading
+	}
+	add(spawned_spheres, obj)
 end
 
 function _init()
@@ -929,7 +970,7 @@ function _update()
 		local sx = Config.ship.position.x
 		local sy = Config.ship.position.y
 		local sz = Config.ship.position.z
-		spawn_quad(sx, sy, sz, 5, 5, 19)
+		spawn_quad(sx, sy, sz, 10, 10, 19)
 	end
 
 	-- Smooth camera rotation (lerp towards target)
@@ -1102,6 +1143,27 @@ function _update()
 			if Config.explosion.enabled then
 				table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
 			end
+
+			-- Spawn explosion quads with dither fading
+			-- Spawn multiple quads around the ship for a burst effect
+			local num_quads = 8
+			for i = 0, num_quads - 1 do
+				local angle = (i / num_quads) * 6.283185  -- 2π radians
+				local distance = 5
+				local offset_x = cos(angle) * distance
+				local offset_z = sin(angle) * distance
+				spawn_quad(
+					Config.ship.position.x + offset_x,
+					Config.ship.position.y,
+					Config.ship.position.z + offset_z,
+					10, 10,  -- width, height
+					Config.explosion.sprite_id or 19,  -- sprite_id
+					64, 64,  -- sprite dimensions
+					camera,  -- camera
+					Config.explosion.lifetime or 2.0,  -- lifetime in seconds
+					true  -- enable dither fading
+				)
+			end
 		end
 	end
 
@@ -1110,6 +1172,17 @@ function _update()
 		local explosion = active_explosions[i]
 		if not explosion:update(0.016) then  -- 60fps = ~0.016s per frame
 			table.remove(active_explosions, i)
+		end
+	end
+
+	-- Update spawned quads (age and remove expired ones)
+	for i = #spawned_spheres, 1, -1 do
+		local obj = spawned_spheres[i]
+		if obj.lifetime then
+			obj.age = obj.age + 0.016  -- Add one frame's worth of time (60fps)
+			if obj.age >= obj.lifetime then
+				table.remove(spawned_spheres, i)
+			end
 		end
 	end
 
@@ -1225,9 +1298,15 @@ function _draw()
 		local mesh = obj.mesh or model_sphere
 
 		if mesh then
-			-- Render the mesh using the lit renderer
+			-- If this is a billboard mesh, regenerate vertices to face camera every frame
+			local verts_to_render = mesh.verts
+			if mesh.is_billboard then
+				verts_to_render = create_billboard_quad(obj.mesh_half_size, camera)
+			end
+
+			-- Render the mesh using the lit renderer (skip lighting if mesh is unlit for performance)
 			local obj_faces_rendered = RendererLit.render_mesh(
-				mesh.verts, mesh.faces, camera,
+				verts_to_render, mesh.faces, camera,
 				obj.x, obj.y, obj.z,
 				nil,  -- sprite override (use sprite from model)
 				light_dir,  -- light direction (directional light)
@@ -1236,7 +1315,12 @@ function _draw()
 				ambient,  -- ambient light
 				false,  -- is_ground
 				0, 0, 0,  -- no rotation
-				Config.camera.render_distance
+				Config.camera.render_distance,
+				nil,  -- ground_always_behind
+				nil,  -- fog_start_distance
+				nil,  -- is_skybox
+				nil,  -- fog_enabled
+				mesh.unlit  -- is_unlit (skip lighting calculation for performance)
 			)
 
 			-- Add all rendered faces to the all_faces list
@@ -1245,6 +1329,15 @@ function _draw()
 				-- Mark as unlit if mesh is marked as unlit
 				if mesh.unlit then
 					face.unlit = true
+				end
+				-- Apply dither-based opacity if quad has dither fading enabled and lifetime
+				if obj.dither_enabled and obj.lifetime then
+					-- Calculate remaining life ratio (1.0 = full lifetime, 0.0 = expired)
+					local remaining_ratio = 1.0 - (obj.age / obj.lifetime)
+					-- Clamp to 0-1 range
+					remaining_ratio = mid(0, remaining_ratio, 1)
+					-- Store dither value for use in draw_faces
+					face.dither_opacity = remaining_ratio
 				end
 				table.insert(all_faces, face)
 			end

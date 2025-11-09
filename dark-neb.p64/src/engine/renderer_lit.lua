@@ -506,7 +506,7 @@ end
 -- @param light_radius: maximum distance light reaches (nil for directional light)
 -- @param light_brightness: brightness of light source 0-1 (required)
 -- @param ambient: ambient light level 0-1 (optional, default 0.2)
-function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offset_z, sprite_override, light_dir_or_pos, light_radius, light_brightness, ambient, is_ground, rot_pitch, rot_yaw, rot_roll, render_distance, ground_always_behind, fog_start_distance, is_skybox, fog_enabled)
+function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offset_z, sprite_override, light_dir_or_pos, light_radius, light_brightness, ambient, is_ground, rot_pitch, rot_yaw, rot_roll, render_distance, ground_always_behind, fog_start_distance, is_skybox, fog_enabled, is_unlit)
 	local prof = RendererLit.profiler
 
 	if prof then prof("    setup") end
@@ -607,59 +607,65 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 	-- Calculate brightness per-face using face normals
 	for i = 1, #faces do
 		local face = faces[i]
-		local v1, v2, v3 = verts[face[1]], verts[face[2]], verts[face[3]]
 
-		-- Calculate two edge vectors
-		local e1x, e1y, e1z = v2.x - v1.x, v2.y - v1.y, v2.z - v1.z
-		local e2x, e2y, e2z = v3.x - v1.x, v3.y - v1.y, v3.z - v1.z
-
-		-- Cross product to get face normal (e2 x e1 for outward-facing normal)
-		local nx = e2y * e1z - e2z * e1y
-		local ny = e2z * e1x - e2x * e1z
-		local nz = e2x * e1y - e2y * e1x
-
-		-- Apply object rotation to normal if rotation is provided
-		if rot_pitch or rot_yaw or rot_roll then
-			-- Rotate by yaw (Y-axis)
-			if rot_yaw then
-				local temp_x = nx * cos_yaw - nz * sin_yaw
-				local temp_z = nx * sin_yaw + nz * cos_yaw
-				nx, nz = temp_x, temp_z
-			end
-			-- Rotate by pitch (X-axis)
-			if rot_pitch then
-				local temp_y = ny * cos_pitch - nz * sin_pitch
-				local temp_z = ny * sin_pitch + nz * cos_pitch
-				ny, nz = temp_y, temp_z
-			end
-			-- Rotate by roll (Z-axis)
-			if rot_roll then
-				local temp_x = nx * cos_roll - ny * sin_roll
-				local temp_y = nx * sin_roll + ny * cos_roll
-				nx, ny = temp_x, temp_y
-			end
-		end
-
-		-- Normalize using fast inverse square root
-		local len_sq = nx * nx + ny * ny + nz * nz
-		if len_sq > 0.0001 then
-			local inv_len = MathUtils.fast_inv_sqrt(len_sq)
-			nx, ny, nz = nx * inv_len, ny * inv_len, nz * inv_len
-
-			-- Calculate brightness for this face using face normal
-			if light_radius == nil then
-				-- Directional light
-				face_brightness[i] = Lighting.calculate_directional_brightness(light_dir_or_pos, light_brightness, ambient, {x = nx, y = ny, z = nz})
-			else
-				-- Point light - use center of triangle for distance calculation
-				local cx = (v1.x + v2.x + v3.x) / 3 + offset_x_val
-				local cy = (v1.y + v2.y + v3.y) / 3 + offset_y_val
-				local cz = (v1.z + v2.z + v3.z) / 3 + offset_z_val
-				face_brightness[i] = Lighting.calculate_vertex_brightness(cx, cy, cz, light_dir_or_pos, light_radius, light_brightness, ambient, {x = nx, y = ny, z = nz})
-			end
+		-- Skip lighting calculation for unlit meshes - use full brightness (no shading), no performance cost for lighting
+		if is_unlit then
+			face_brightness[i] = 1.0  -- Full brightness, no lighting
 		else
-			-- Degenerate face - use ambient only
-			face_brightness[i] = ambient
+			local v1, v2, v3 = verts[face[1]], verts[face[2]], verts[face[3]]
+
+			-- Calculate two edge vectors
+			local e1x, e1y, e1z = v2.x - v1.x, v2.y - v1.y, v2.z - v1.z
+			local e2x, e2y, e2z = v3.x - v1.x, v3.y - v1.y, v3.z - v1.z
+
+			-- Cross product to get face normal (e2 x e1 for outward-facing normal)
+			local nx = e2y * e1z - e2z * e1y
+			local ny = e2z * e1x - e2x * e1z
+			local nz = e2x * e1y - e2y * e1x
+
+			-- Apply object rotation to normal if rotation is provided
+			if rot_pitch or rot_yaw or rot_roll then
+				-- Rotate by yaw (Y-axis)
+				if rot_yaw then
+					local temp_x = nx * cos_yaw - nz * sin_yaw
+					local temp_z = nx * sin_yaw + nz * cos_yaw
+					nx, nz = temp_x, temp_z
+				end
+				-- Rotate by pitch (X-axis)
+				if rot_pitch then
+					local temp_y = ny * cos_pitch - nz * sin_pitch
+					local temp_z = ny * sin_pitch + nz * cos_pitch
+					ny, nz = temp_y, temp_z
+				end
+				-- Rotate by roll (Z-axis)
+				if rot_roll then
+					local temp_x = nx * cos_roll - ny * sin_roll
+					local temp_y = nx * sin_roll + ny * cos_roll
+					nx, ny = temp_x, temp_y
+				end
+			end
+
+			-- Normalize using fast inverse square root
+			local len_sq = nx * nx + ny * ny + nz * nz
+			if len_sq > 0.0001 then
+				local inv_len = MathUtils.fast_inv_sqrt(len_sq)
+				nx, ny, nz = nx * inv_len, ny * inv_len, nz * inv_len
+
+				-- Calculate brightness for this face using face normal
+				if light_radius == nil then
+					-- Directional light
+					face_brightness[i] = Lighting.calculate_directional_brightness(light_dir_or_pos, light_brightness, ambient, {x = nx, y = ny, z = nz})
+				else
+					-- Point light - use center of triangle for distance calculation
+					local cx = (v1.x + v2.x + v3.x) / 3 + offset_x_val
+					local cy = (v1.y + v2.y + v3.y) / 3 + offset_y_val
+					local cz = (v1.z + v2.z + v3.z) / 3 + offset_z_val
+					face_brightness[i] = Lighting.calculate_vertex_brightness(cx, cy, cz, light_dir_or_pos, light_radius, light_brightness, ambient, {x = nx, y = ny, z = nz})
+				end
+			else
+				-- Degenerate face - use ambient only
+				face_brightness[i] = ambient
+			end
 		end
 	end
 
@@ -803,18 +809,23 @@ function RendererLit.render_mesh(verts, faces, camera, offset_x, offset_y, offse
 				-- Get face brightness (same for all 3 vertices = flat shading)
 				local brightness = face_brightness[i]
 
-				add(projected_faces, {
+				local face_data = {
 					face = {face[1], face[2], face[3], sprite_a, uv1, uv2, uv3},
 					depth = avg_depth,
 					p1 = p1,
 					p2 = p2,
 					p3 = p3,
 					fog = fog_opacity,
-					-- Store same brightness for all vertices (flat shading)
-					b1 = brightness,
-					b2 = brightness,
-					b3 = brightness
-				})
+				}
+
+				-- Only add brightness for lit faces; unlit faces skip this so draw_faces knows to render without lighting
+				if not face.unlit then
+					face_data.b1 = brightness
+					face_data.b2 = brightness
+					face_data.b3 = brightness
+				end
+
+				add(projected_faces, face_data)
 			end
 		end
 	end
@@ -865,31 +876,66 @@ function RendererLit.draw_faces(all_faces)
 		-- Z is always 0 for screen-space vertices
 		vpool[2], vpool[8], vpool[14] = 0, 0, 0
 
-		-- Check if this face has lighting data
-		if f.b1 then
-			-- Lit face: use cached brightness sprite
-			local b1, b2, b3 = f.b1, f.b2, f.b3
+		-- Check if this face has dither opacity (fade out effect)
+		if f.dither_opacity and f.dither_opacity < 1.0 then
+			-- Apply dither fading by randomly skipping pixels based on opacity
+			-- Use a dither pattern seeded by screen position
+			local dither_threshold = f.dither_opacity
 
-			-- Calculate average brightness for this triangle (0-1)
-			local avg_b = (b1 + b2 + b3) / 3
+			-- Render triangle with dither masking
+			-- We'll use a simple approach: skip rendering based on dither_threshold
+			-- Higher opacity = render more pixels, lower opacity = render fewer pixels
 
-			-- Convert brightness to level (0-3)
-			local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
-			if brightness_level < 0 then brightness_level = 0 end
-			if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
-
-			-- Get cached brightness sprite
-			local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
-
-			-- Draw using brightness sprite
-			props.tex = brightness_sprite
-			props.tex2 = nil
-			RendererLit.textri(props, vpool, 270)
+			-- For now, we can still render but at reduced opacity conceptually
+			-- Picotron doesn't have true alpha blending, so we use dithering:
+			-- Only render if random value < dither_threshold
+			if rnd() < dither_threshold then
+				if f.b1 then
+					-- Lit face with dither
+					local b1, b2, b3 = f.b1, f.b2, f.b3
+					local avg_b = (b1 + b2 + b3) / 3
+					local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
+					if brightness_level < 0 then brightness_level = 0 end
+					if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
+					local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
+					props.tex = brightness_sprite
+					props.tex2 = nil
+					RendererLit.textri(props, vpool, 270)
+				else
+					-- Unlit face with dither
+					props.tex = sprite_a
+					props.tex2 = nil
+					RendererLit.textri(props, vpool, 270)
+				end
+			end
 		else
-			-- Unlit face: render normally without lighting
-			props.tex = sprite_a
-			props.tex2 = nil
-			RendererLit.textri(props, vpool, 270)
+			-- No dither opacity: render normally
+			-- Check if this face has lighting data
+			if f.b1 then
+				-- Lit face: use cached brightness sprite
+				local b1, b2, b3 = f.b1, f.b2, f.b3
+
+				-- Calculate average brightness for this triangle (0-1)
+				local avg_b = (b1 + b2 + b3) / 3
+
+				-- Convert brightness to level (0-3)
+				local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
+				if brightness_level < 0 then brightness_level = 0 end
+				if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
+
+				-- Get cached brightness sprite
+				local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
+
+				-- Draw using brightness sprite
+				props.tex = brightness_sprite
+				props.tex2 = nil
+				RendererLit.textri(props, vpool, 270)
+			else
+				-- Unlit face: render normally without lighting
+				props.tex = sprite_a
+				props.tex2 = nil
+				RendererLit.textri(props, vpool, 270)
+			end
 		end
 	end
 end
