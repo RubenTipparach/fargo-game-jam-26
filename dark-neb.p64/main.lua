@@ -808,9 +808,12 @@ function spawn_quad(x, y, z, width, height, sprite_id, sprite_w, sprite_h, camer
 		mesh_half_size = hw,
 		lifetime = lifetime,  -- Lifetime in seconds (nil = infinite)
 		age = 0,  -- Current age in seconds
-		dither_enabled = dither_enabled or false  -- Enable dither fading
+		dither_enabled = dither_enabled or false,  -- Enable dither fading
+		scale = 1.0,  -- Current scale multiplier
+		explosion_opacity = 1.0  -- Opacity controlled by explosion
 	}
 	add(spawned_spheres, obj)
+	return obj
 end
 
 function _init()
@@ -964,13 +967,16 @@ function _update()
 	-- Clamp light pitch to reasonable range
 	light_pitch = mid(-1.5, light_pitch, 1.5)
 
-	-- X key to spawn quad
+	-- X key to spawn explosion
 	if keyp("x") then
-		printh("X KEY PRESSED!")
-		local sx = Config.ship.position.x
-		local sy = Config.ship.position.y
-		local sz = Config.ship.position.z
-		spawn_quad(sx, sy, sz, 10, 10, 19)
+		printh("X KEY PRESSED - SPAWNING EXPLOSION!")
+		local explosion = Explosion.new(
+			Config.ship.position.x,
+			Config.ship.position.y,
+			Config.ship.position.z,
+			Config.explosion
+		)
+		table.insert(active_explosions, explosion)
 	end
 
 	-- Smooth camera rotation (lerp towards target)
@@ -1139,7 +1145,9 @@ function _update()
 			is_dead = true
 			death_time = 0
 
-			-- Spawn explosion at ship position
+			-- TODO: Spawn explosion at ship position using new Explosion object
+			-- Will be replaced with new particle explosion system
+			--[[ COMMENTED OUT - WILL BE REPLACED WITH NEW EXPLOSION SYSTEM
 			if Config.explosion.enabled then
 				table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
 			end
@@ -1164,14 +1172,46 @@ function _update()
 					true  -- enable dither fading
 				)
 			end
+			--]]
 		end
 	end
 
-	-- Update explosions
+	-- Update explosions and spawn their quads
 	for i = #active_explosions, 1, -1 do
 		local explosion = active_explosions[i]
+
+		-- Update explosion (returns false if dead)
 		if not explosion:update(0.016) then  -- 60fps = ~0.016s per frame
 			table.remove(active_explosions, i)
+		else
+			-- Spawn quads for this explosion on first frame only
+			if explosion.age <= 0.016 then
+				for _, particle in ipairs(explosion.particles) do
+					local quad = spawn_quad(
+						particle.x,
+						particle.y,
+						particle.z,
+						10, 10,  -- initial width, height
+						explosion.sprite_id,  -- sprite_id
+						64, 64,  -- sprite dimensions
+						camera,  -- camera
+						explosion.lifetime,  -- lifetime in seconds
+						true  -- enable dither fading
+					)
+					-- Store reference to explosion for scale/opacity updates
+					particle.quad_obj = quad
+				end
+			end
+
+			-- Update quad scales and opacity based on explosion state
+			local state = explosion:get_state()
+			for _, particle in ipairs(explosion.particles) do
+				if particle.quad_obj then
+					particle.quad_obj.scale = state.scale
+					-- Pass opacity directly (1.0 = opaque, 0.0 = transparent)
+					particle.quad_obj.explosion_opacity = state.opacity
+				end
+			end
 		end
 	end
 
@@ -1301,7 +1341,9 @@ function _draw()
 			-- If this is a billboard mesh, regenerate vertices to face camera every frame
 			local verts_to_render = mesh.verts
 			if mesh.is_billboard then
-				verts_to_render = create_billboard_quad(obj.mesh_half_size, camera)
+				-- Apply explosion scale if this quad is part of an explosion
+				local scale_factor = obj.scale or 1.0
+				verts_to_render = create_billboard_quad(obj.mesh_half_size * scale_factor, camera)
 			end
 
 			-- Render the mesh using the lit renderer (skip lighting if mesh is unlit for performance)
@@ -1329,6 +1371,10 @@ function _draw()
 				-- Mark as unlit if mesh is marked as unlit
 				if mesh.unlit then
 					face.unlit = true
+				end
+				-- Apply explosion opacity if set
+				if obj.explosion_opacity and obj.explosion_opacity < 1.0 then
+					face.explosion_opacity = obj.explosion_opacity
 				end
 				-- Apply dither-based opacity if quad has dither fading enabled and lifetime
 				if obj.dither_enabled and obj.lifetime then

@@ -54,8 +54,8 @@ function ExplosionRenderer.render_explosions(active_explosions, camera, all_face
 
 				-- Only add face if all vertices are in front of camera
 				if p1 and p2 and p3 then
-					-- Calculate average depth
-					local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333
+					-- Calculate average depth with bias to wrap around nearby geometry
+					local avg_depth = (p1.depth + p2.depth + p3.depth) * 0.333333 + 10
 
 					-- Add to face list for depth sorting - mark as unlit
 					table.insert(all_faces, {

@@ -876,38 +876,63 @@ function RendererLit.draw_faces(all_faces)
 		-- Z is always 0 for screen-space vertices
 		vpool[2], vpool[8], vpool[14] = 0, 0, 0
 
+		-- Determine the effective opacity to use for dithering
+		-- Explosion opacity takes precedence if set
+		local effective_opacity = 1.0
+		if f.explosion_opacity then
+			effective_opacity = f.explosion_opacity
+		elseif f.dither_opacity then
+			effective_opacity = f.dither_opacity
+		end
+
 		-- Check if this face has dither opacity (fade out effect)
-		if f.dither_opacity and f.dither_opacity < 1.0 then
-			-- Apply dither fading by randomly skipping pixels based on opacity
-			-- Use a dither pattern seeded by screen position
-			local dither_threshold = f.dither_opacity
+		if effective_opacity < 0.9 then
+			-- Apply dither fading using fillp patterns for smooth transparency
+			local fillp_pattern = 0
 
-			-- Render triangle with dither masking
-			-- We'll use a simple approach: skip rendering based on dither_threshold
-			-- Higher opacity = render more pixels, lower opacity = render fewer pixels
-
-			-- For now, we can still render but at reduced opacity conceptually
-			-- Picotron doesn't have true alpha blending, so we use dithering:
-			-- Only render if random value < dither_threshold
-			if rnd() < dither_threshold then
-				if f.b1 then
-					-- Lit face with dither
-					local b1, b2, b3 = f.b1, f.b2, f.b3
-					local avg_b = (b1 + b2 + b3) / 3
-					local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
-					if brightness_level < 0 then brightness_level = 0 end
-					if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
-					local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
-					props.tex = brightness_sprite
-					props.tex2 = nil
-					RendererLit.textri(props, vpool, 270)
-				else
-					-- Unlit face with dither
-					props.tex = sprite_a
-					props.tex2 = nil
-					RendererLit.textri(props, vpool, 270)
-				end
+			-- Select dither pattern based on opacity level
+			if effective_opacity > 0.875 then
+				fillp_pattern = 0b1000000010000000
+			elseif effective_opacity > 0.75 then
+				fillp_pattern = 0b1000010000100001
+			elseif effective_opacity > 0.625 then
+				fillp_pattern = 0b1000010010000100
+			elseif effective_opacity > 0.5 then
+				fillp_pattern = 0b1010010010100100
+			elseif effective_opacity > 0.375 then
+				fillp_pattern = 0b0101101001011010
+			elseif effective_opacity > 0.25 then
+				fillp_pattern = 0b0101101101011011
+			elseif effective_opacity > 0.125 then
+				fillp_pattern = 0b0111101101111011
+			else
+				fillp_pattern = 0b0111111101111111
 			end
+
+			-- Apply dither pattern
+			fillp(fillp_pattern)
+
+			-- Render the face with dither pattern
+			if f.b1 then
+				-- Lit face with dither
+				local b1, b2, b3 = f.b1, f.b2, f.b3
+				local avg_b = (b1 + b2 + b3) / 3
+				local brightness_level = flr(avg_b * (BRIGHTNESS_LEVELS - 1) + 0.5)
+				if brightness_level < 0 then brightness_level = 0 end
+				if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
+				local brightness_sprite = RendererLit.get_brightness_sprite(sprite_a, brightness_level)
+				props.tex = brightness_sprite
+				props.tex2 = nil
+				RendererLit.textri(props, vpool, 270)
+			else
+				-- Unlit face with dither
+				props.tex = sprite_a
+				props.tex2 = nil
+				RendererLit.textri(props, vpool, 270)
+			end
+
+			-- Reset fill pattern
+			fillp()
 		else
 			-- No dither opacity: render normally
 			-- Check if this face has lighting data

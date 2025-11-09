@@ -311,9 +311,9 @@ function Renderer.draw_faces(all_faces, ship_flash_red)
 			fillp()
 		elseif sprite_id == 5 then
 			local opacity = f.opacity or 1.0
-			fillp(opacity < 0.25 and 0b1000000010000000 or
-			      opacity < 0.5 and 0b1000010010000100 or
-			      opacity < 0.75 and 0b0101101001011010 or 0b0111111101111111)
+			fillp(opacity > 0.75 and 0b0111111101111111 or
+			      opacity > 0.5 and 0b0101101001011010 or
+			      opacity > 0.25 and 0b1000010010000100 or 0b1000000010000000)
 			Renderer.textri(props, vpool, 270)
 			fillp()
 		else

@@ -138,9 +138,22 @@ Config.health = {
 Config.explosion = {
 	enabled = true,  -- Enable explosions on death
 	sprite_id = 19,  -- Sprite ID for explosion (big explosion sprite)
-	quad_size = 2,  -- Initial quad size (50 units on each side, 10x larger)
-	max_scale = 3.0,  -- Maximum scale multiplier (grows to 3x size)
-	lifetime = 5.0,  -- Explosion lifetime in seconds
+
+	-- Scale behavior
+	quad_count = 1,  -- Number of quads to spawn (1 = single center quad)
+	initial_scale = 1.0,  -- Starting scale of the quad
+	max_scale = 5.0,  -- Maximum scale reached at peak
+	speed_up_time = 0.2,  -- Time to reach max scale (seconds)
+	slowdown_time = 1.7,  -- Time from max scale to end (seconds)
+	slow_growth_factor = 0.2,  -- Additional growth during fade phase (20%)
+
+	-- Fade behavior
+	lifetime = 2.0,  -- Total explosion lifetime in seconds
+	fade_start_ratio = 0.5,  -- When fade starts (0.5 = halfway through lifetime)
+
+	-- Spread
+	spread_distance = 5,  -- Distance to spread quads from center (for future multi-quad use)
+
 	dither_enabled = true,  -- Apply dithering for growing/fading effect
 }
 
