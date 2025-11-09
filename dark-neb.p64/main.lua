@@ -130,6 +130,15 @@ local energy_system = {
 	sensors = Config.energy.systems.sensors.allocated,
 }
 
+-- No energy message feedback
+local no_energy_message = {
+	visible = false,
+	x = 0,
+	y = 0,
+	duration = 0,
+	max_duration = 1.0  -- Show for 1 second
+}
+
 -- Cached position variables for efficiency
 local ship_pos = nil  -- Current ship position (updated each frame)
 
@@ -1008,16 +1017,18 @@ end
 -- Load satellites for current mission
 function reload_mission_satellites()
 	local current_mission_num = Missions.get_current_mission().id
-	local mission = current_mission_num == 1 and Config.missions.mission_1 or Config.missions.mission_2
+	local mission = current_mission_num == 1 and Config.missions.mission_1 or (current_mission_num == 2 and Config.missions.mission_2) or Config.missions.mission_3
 
 	-- Reset enemy ships list
 	enemy_ships = {}
 	destroyed_enemies = {}
 
+	local load_obj_func = require("src.engine.obj_loader")
+
+	-- Load satellites for Mission 1 & 2
 	if mission.satellites and #mission.satellites > 0 then
 		-- Load satellite model from first satellite config
 		local first_sat_config = mission.satellites[1]
-		local load_obj_func = require("src.engine.obj_loader")
 		model_satellite = load_obj_func(first_sat_config.model_file)
 
 		if model_satellite then
@@ -1053,6 +1064,148 @@ function reload_mission_satellites()
 			table.insert(enemy_ships, enemy)
 		end
 	end
+
+	-- Load Grabon enemies for Mission 3
+	if mission.enemies and #mission.enemies > 0 then
+		for i, enemy_config in ipairs(mission.enemies) do
+			-- Load model
+			local model_grabon = load_obj_func(enemy_config.model_file)
+			if not model_grabon then
+				printh("WARNING: Failed to load " .. enemy_config.model_file)
+				model_grabon = model_satellite  -- Fallback to satellite model
+			end
+
+			-- Create position reference
+			local enemy_position = {
+				x = enemy_config.position.x,
+				y = enemy_config.position.y,
+				z = enemy_config.position.z
+			}
+
+			-- Create Grabon enemy object with AI
+			local enemy = {
+				id = enemy_config.id,
+				type = "grabon",
+				position = enemy_position,
+				config = enemy_config,
+				model = model_grabon,
+				is_destroyed = false,
+				health = enemy_config.current_health,
+				current_health = enemy_config.current_health,
+				max_health = enemy_config.max_health,
+				armor = enemy_config.armor,
+				collision_cooldown = 0,
+				-- Movement state
+				heading = enemy_config.heading or 0,
+				speed = enemy_config.ai.speed or 0.3,
+				-- AI state
+				ai_target = nil,  -- Will be set to player ship
+				ai_target_detected = false,
+				ai_last_weapon_fire_time = {0, 0},  -- Track fire time for each weapon
+			}
+
+			table.insert(enemy_ships, enemy)
+		end
+	end
+end
+
+-- Update Grabon AI for Mission 3
+-- Handles movement, rotation, target detection, and weapon firing
+function update_grabon_ai()
+	for _, enemy in ipairs(enemy_ships) do
+		if enemy.type == "grabon" and not enemy.is_destroyed then
+			local ai = enemy.config.ai
+
+			-- Detect player target
+			if not enemy.ai_target_detected then
+				-- Calculate distance to player
+				local dx = ship_pos.x - enemy.position.x
+				local dz = ship_pos.z - enemy.position.z
+				local distance = math.sqrt(dx*dx + dz*dz)
+
+				-- Detect if player within sensor range
+				if distance < ai.target_detection_range then
+					enemy.ai_target_detected = true
+					enemy.ai_target = ship_pos
+				end
+			end
+
+			if enemy.ai_target_detected then
+				-- Update target position (follow player)
+				enemy.ai_target = ship_pos
+
+				-- Calculate direction to target
+				local dx = enemy.ai_target.x - enemy.position.x
+				local dz = enemy.ai_target.z - enemy.position.z
+				local target_distance = math.sqrt(dx*dx + dz*dz)
+
+				if target_distance > 0 then
+					-- Calculate target heading (0-1 turns)
+					local target_heading = atan2(dx, dz) / (2 * math.pi)
+					if target_heading < 0 then target_heading = target_heading + 1 end
+
+					-- Smoothly rotate towards target
+					local heading_diff = target_heading - enemy.heading
+					-- Normalize heading difference to -0.5 to 0.5 range
+					if heading_diff > 0.5 then
+						heading_diff = heading_diff - 1
+					elseif heading_diff < -0.5 then
+						heading_diff = heading_diff + 1
+					end
+
+					-- Apply turn rate
+					enemy.heading = enemy.heading + heading_diff * ai.turn_rate
+					-- Normalize heading to 0-1 range
+					if enemy.heading < 0 then enemy.heading = enemy.heading + 1 end
+					if enemy.heading >= 1 then enemy.heading = enemy.heading - 1 end
+				end
+
+				-- Move towards target based on allocated speed
+				if target_distance > ai.attack_range then
+					-- Move towards target
+					local move_amount = ai.speed * 0.5  -- Adjust speed scaling
+					enemy.position.x = enemy.position.x + (dx / target_distance) * move_amount
+					enemy.position.z = enemy.position.z + (dz / target_distance) * move_amount
+				end
+
+				-- Fire weapons if in range and in firing arc
+				if target_distance < ai.attack_range then
+					-- Calculate if target is in firing arc
+					local heading_to_target = atan2(dx, dz) / (2 * math.pi)
+					if heading_to_target < 0 then heading_to_target = heading_to_target + 1 end
+
+					local arc_angle = (heading_to_target - enemy.heading) * 360
+					if arc_angle > 180 then arc_angle = arc_angle - 360 end
+					if arc_angle < -180 then arc_angle = arc_angle + 360 end
+
+					-- Check if in firing arc
+					if arc_angle >= ai.firing_arc_start and arc_angle <= ai.firing_arc_end then
+						-- Fire weapons on interval
+						for w = 1, #ai.weapons do
+							local weapon = ai.weapons[w]
+							local current_time = t()  -- Get current elapsed time (Picotron API)
+
+							if not enemy.ai_last_weapon_fire_time then
+								enemy.ai_last_weapon_fire_time = {}
+							end
+
+							if not enemy.ai_last_weapon_fire_time[w] then
+								enemy.ai_last_weapon_fire_time[w] = 0
+							end
+
+							-- Fire if enough time has passed
+							if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
+								-- Fire beam from Grabon towards player
+								WeaponEffects.fire_beam(enemy.position, ship_pos, weapon.damage or 10)
+								-- Track firing time
+								enemy.ai_last_weapon_fire_time[w] = current_time
+							end
+						end
+					end
+				end
+			end
+		end
+	end
 end
 
 -- Track energy block hit boxes for interactive allocation
@@ -1074,6 +1227,7 @@ function build_energy_hitboxes()
 		-- Calculate position for this system's energy bar
 		local bar_y = energy_cfg.ui_y + (i - 1) * energy_cfg.system_spacing
 		local bar_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset
+		local padding = energy_cfg.hitbox and energy_cfg.hitbox.padding or 1
 
 		-- Create hitboxes for each energy unit
 		for j = 1, capacity do
@@ -1082,13 +1236,17 @@ function build_energy_hitboxes()
 			local rect_x2 = rect_x + energy_cfg.bar_width
 			local rect_y2 = rect_y + energy_cfg.bar_height
 
-			-- Store hitbox for this block
+			-- Store hitbox for this block with padding for easier clicking
 			if energy_block_hitboxes[system_name] == nil then
 				energy_block_hitboxes[system_name] = {}
 			end
 			energy_block_hitboxes[system_name][j] = {
-				x1 = rect_x, y1 = rect_y, x2 = rect_x2, y2 = rect_y2,
-				is_filled = (j <= allocated)
+				x1 = rect_x - padding, y1 = rect_y - padding,
+				x2 = rect_x2 + padding, y2 = rect_y2 + padding,
+				is_filled = (j <= allocated),
+				-- Store original bounds for reference
+				orig_x1 = rect_x, orig_y1 = rect_y,
+				orig_x2 = rect_x2, orig_y2 = rect_y2
 			}
 		end
 	end
@@ -1098,12 +1256,17 @@ end
 function draw_energy_bars()
 	local energy_cfg = Config.energy
 	-- Hide tractor beam UI for now - will implement later
-	local systems_list = {"weapons", "impulse", "shields", --[["tractor_beam",]] "sensors"}
+	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
 
 	-- Draw vertical total energy bar on the left
 	draw_total_energy_bar()
 
 	for i, system_name in ipairs(systems_list) do
+		-- Skip tractor_beam (hidden for now, but keep position for consistency with hitboxes)
+		if system_name == "tractor_beam" then
+			goto skip_draw
+		end
+
 		local system_cfg = energy_cfg.systems[system_name]
 		local allocated = energy_system[system_name]
 		local capacity = system_cfg.capacity
@@ -1131,6 +1294,8 @@ function draw_energy_bars()
 
 		-- Draw system name label
 		print(system_name, bar_x + capacity * (energy_cfg.bar_width + energy_cfg.bar_spacing) + 5, bar_y, 7)
+
+		::skip_draw::
 	end
 end
 
@@ -1172,8 +1337,10 @@ function handle_energy_clicks(mx, my)
 	for system_name, blocks in pairs(energy_block_hitboxes) do
 		for block_num, hitbox in pairs(blocks) do
 			if mx >= hitbox.x1 and mx <= hitbox.x2 and my >= hitbox.y1 and my <= hitbox.y2 then
-				-- Clicked on a block
-				if hitbox.is_filled then
+				-- Clicked on a block - recalculate is_filled from current energy_system state
+				local is_filled = block_num <= energy_system[system_name]
+
+				if is_filled then
 					-- Block is filled: deallocate all energy down to and including this block
 					-- First block clicked deallocates 1 energy, second deallocates 1 more, etc
 					energy_system[system_name] = block_num - 1
@@ -1192,6 +1359,15 @@ function handle_energy_clicks(mx, my)
 					if available >= to_allocate then
 						energy_system[system_name] = block_num
 					else
+						-- No energy available - show feedback message
+						if available <= 0 then
+							no_energy_message.visible = true
+							no_energy_message.x = mx
+							no_energy_message.y = my
+							no_energy_message.duration = no_energy_message.max_duration
+							printh("No energy available!")
+							return true
+						end
 						-- Only allocate as much as available
 						energy_system[system_name] = min(current + available, system_cfg.capacity)
 					end
@@ -1210,6 +1386,15 @@ local _update_frame_counter = 0
 
 function _update()
 	_update_frame_counter = _update_frame_counter + 1
+
+	-- Update no energy message duration
+	if no_energy_message.visible then
+		no_energy_message.duration = no_energy_message.duration - 0.016  -- ~60fps frame time
+		if no_energy_message.duration <= 0 then
+			no_energy_message.visible = false
+		end
+	end
+
 	-- Mouse input (used for menu and gameplay)
 	mx, my, mb = mouse()
 
@@ -1265,6 +1450,22 @@ function _update()
 					energy_system.impulse = 0
 					energy_system.shields = 0
 					energy_system.sensors = 0
+					energy_system.tractor_beam = 0
+				elseif selected_mission.id == "mission_3" then
+					-- Load mission 3
+					Missions.advance_mission()  -- Switch to mission 2
+					Missions.advance_mission()  -- Switch to mission 3
+					-- Mission 3: Focus on combat (impulse and weapons)
+					Config.energy.systems.impulse.allocated = 2
+					Config.energy.systems.weapons.allocated = 4
+					Config.energy.systems.shields.allocated = 0
+					Config.energy.systems.sensors.allocated = 0  -- Sensors disabled for Mission 3
+					Config.energy.systems.tractor_beam.allocated = 0
+					-- Reset local energy_system table to match
+					energy_system.weapons = 4
+					energy_system.impulse = 2
+					energy_system.shields = 0
+					energy_system.sensors = 0  -- Sensors disabled for Mission 3
 					energy_system.tractor_beam = 0
 				end
 			end
@@ -1457,35 +1658,37 @@ function _update()
 	-- Check if mouse is hovering over any satellite bounding box
 	hovered_target = nil
 	for _, enemy in ipairs(enemy_ships) do
-		if enemy.type == "satellite" and enemy.position and not enemy.is_destroyed then
-			local sat_pos = enemy.position
-			local sat_collider = enemy.config.collider
+		if enemy.position and not enemy.is_destroyed then
+			if enemy.type == "satellite" or enemy.type == "grabon" then
+				local pos = enemy.position
+				local collider = enemy.config and enemy.config.collider or {width = 10, height = 10}
 
-			-- Project satellite center to screen and check if mouse is in the box
-			-- Simple check: if we can project the center and it's close to mouse, consider it hovered
-			local center_px, center_py = project_point(sat_pos.x, sat_pos.y, sat_pos.z, camera)
-			if center_px and center_py then
-				-- Simple radius check (rough approximation)
-				local dx = mx - center_px
-				local dy = my - center_py
-				local dist = sqrt(dx * dx + dy * dy)
-				if dist < 20 then  -- Hover radius in pixels
-					-- Set hovered target to this enemy ship
-					hovered_target = enemy
-					break  -- Only hover over the closest one
+				-- Project center to screen and check if mouse is in the box
+				-- Simple check: if we can project the center and it's close to mouse, consider it hovered
+				local center_px, center_py = project_point(pos.x, pos.y, pos.z, camera)
+				if center_px and center_py then
+					-- Simple radius check (rough approximation)
+					local dx = mx - center_px
+					local dy = my - center_py
+					local dist = sqrt(dx * dx + dy * dy)
+					if dist < 20 then  -- Hover radius in pixels
+						-- Set hovered target to this enemy ship
+						hovered_target = enemy
+						break  -- Only hover over the closest one
+					end
 				end
 			end
 		end
 	end
 
-	-- Right-click to set ship heading or select satellite target
+	-- Right-click to set ship heading or select satellite/Grabon target
 	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
-		-- If satellite is hovered, select it as target instead of setting heading
-		if hovered_target and hovered_target.type == "satellite" and model_satellite then
+		-- If satellite or Grabon is hovered, select it as target instead of setting heading
+		if hovered_target and (hovered_target.type == "satellite" or hovered_target.type == "grabon") then
 			current_selected_target = hovered_target
 			camera_locked_to_target = true
 			camera_pitch_before_targeting = camera.rx  -- Save current pitch
-			printh("Satellite selected as target! ID=" .. current_selected_target.id)
+			printh(hovered_target.type .. " selected as target! ID=" .. current_selected_target.id)
 			printh("DEBUG: current_selected_target IS SET after right-click")
 		elseif raycast_x and raycast_z then
 			-- Only set ship heading if we have a valid crosshair (raycast succeeded)
@@ -1940,6 +2143,11 @@ function _update()
 		end
 	end
 
+	-- Update Grabon AI for Mission 3
+	if Missions.get_current_mission().id == 3 then
+		update_grabon_ai()
+	end
+
 	-- Check collisions between player ship and enemy ships
 	if not is_dead then
 		local ship_collider = Config.ship.collider
@@ -2134,6 +2342,24 @@ function _update()
 			Missions.update_targeting_objective(current_selected_target)
 			-- Count destroyed enemies for combat objective
 			Missions.update_combat_objective(#destroyed_enemies)
+		elseif current_mission.id == 3 then
+			-- Update mission 3 objectives
+			Missions.update_search_objective(current_selected_target)
+			-- Check if player took damage (engaged by Grabon)
+			local took_damage = current_health < player_health_obj.current_health
+			if took_damage then
+				Missions.update_engage_objective(1)  -- 1 = took damage
+				player_health_obj.current_health = current_health  -- Update tracker
+			end
+			-- Check if Grabon is destroyed
+			local grabon_destroyed = false
+			for _, enemy in ipairs(enemy_ships) do
+				if enemy.type == "grabon" and enemy.is_destroyed then
+					grabon_destroyed = true
+					break
+				end
+			end
+			Missions.update_destroy_objective(grabon_destroyed)
 		end
 
 		-- Check if current mission is complete
@@ -2182,6 +2408,26 @@ local function draw_sun()
 	end
 end
 
+-- Draw the "no energy" feedback message
+function draw_no_energy_message()
+	if not no_energy_message.visible then return end
+
+	local msg_text = "NO ENERGY"
+	local box_width = 60
+	local box_height = 20
+	local box_x = no_energy_message.x - box_width / 2
+	local box_y = no_energy_message.y - box_height - 5
+
+	-- Draw box background
+	rectfill(box_x, box_y, box_x + box_width, box_y + box_height, 8)  -- Red background
+
+	-- Draw box border
+	rect(box_x, box_y, box_x + box_width, box_y + box_height, 7)  -- White border
+
+	-- Draw text (centered)
+	print(msg_text, box_x + 5, box_y + 6, 7)  -- White text
+end
+
 function _draw()
 	cls(0)  -- Clear to dark blue
 
@@ -2202,7 +2448,8 @@ function _draw()
 	local light_dir = get_light_direction()
 
 	-- Render planet with lit shader (same as ship)
-	if model_planet then
+	-- Skip planet rendering for Mission 3 (empty space)
+	if model_planet and Missions.get_current_mission().id ~= 3 then
 		local planet_pos = Config.planet.position
 		local planet_rot = Config.planet.rotation
 
@@ -2776,6 +3023,9 @@ function _draw()
 
 	-- Draw energy bars
 	draw_energy_bars()
+
+	-- Draw no energy feedback message
+	draw_no_energy_message()
 
 	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
 	-- Hide health bar if satellite is destroyed

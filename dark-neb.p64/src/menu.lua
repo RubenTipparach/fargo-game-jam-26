@@ -30,6 +30,13 @@ function Menu.init(config)
 			description = config.missions.mission_2.description,
 		})
 	end
+	if config.missions.mission_3 then
+		table.insert(Menu.missions, {
+			id = "mission_3",
+			name = "Mission 3",
+			description = config.missions.mission_3.description,
+		})
+	end
 end
 
 -- Draw the menu

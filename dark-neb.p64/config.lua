@@ -265,6 +265,13 @@ Config.energy = {
 	ui_y = 30,  -- Below health bar
 	system_spacing = 15,  -- Vertical space between each system's energy bar
 	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar
+
+	-- Hitbox configuration for energy allocation clicks
+	-- These define the clickable areas for adjusting energy allocation
+	hitbox = {
+		enabled = true,  -- Enable/disable hitbox detection
+		padding = 1,  -- Extra padding around bars for easier clicking
+	},
 }
 
 -- Mission and Goal UI configuration
@@ -384,6 +391,72 @@ Config.missions = {
 				type = "destroy",
 				target = "satellite",
 				min_health_percent = 50,  -- Keep satellite above 50% health
+			},
+		},
+	},
+	-- Mission 3: Patrol - First day on the job, find and destroy the enemy
+	mission_3 = {
+		name = "Mission 3: Patrol",
+		description = "Find and destroy the enemy Grabon",
+		ship_start = {x = 0, y = 0, z = 0},
+		planet_start = {x = 50, y = 0, z = 0},
+		-- Enemy Grabon AI opponent
+		enemies = {
+			{
+				id = "grabon_1",
+				position = {x = 100, y = 0, z = 100},  -- Far away, player must search
+				rotation = {pitch = 0, yaw = 0, roll = 0},
+				heading = 0.5,  -- Initial heading (0-1 turns)
+				model_file = "models/grabons.obj",
+				sprite_id = 3,
+				max_health = 150,
+				current_health = 150,
+				armor = 2.0,  -- Tougher than satellites
+				sensor_range = 250,  -- Can detect player from far away
+				-- AI behavior
+				ai = {
+					-- Movement
+					speed = 0.3,  -- Allocated speed (0-1)
+					max_speed = 1.0,
+					turn_rate = 0.001,  -- Slow rotation towards target
+					-- Combat
+					target_detection_range = 250,
+					attack_range = 120,
+					firing_arc_start = -45,  -- Weapon arc
+					firing_arc_end = 45,
+					-- Dual weapons (like player ship)
+					weapons = {
+						{
+							name = "Primary Cannon",
+							charge_time = 2.0,
+							fire_rate = 0.15,  -- Seconds between shots
+							range = 120,
+							damage = 20,
+							last_fire_time = 0,
+						},
+						{
+							name = "Secondary Cannon",
+							charge_time = 2.5,
+							fire_rate = 0.2,
+							range = 100,
+							damage = 15,
+							last_fire_time = 0,
+						},
+					},
+				},
+				collider = {
+					type = "box",
+					half_size = {x = 2.5, y = 1.5, z = 3.5},  -- Slightly larger than satellite
+				},
+				bounding_box_color_default = 8,  -- Red (enemy)
+				bounding_box_color_hover = 10,  -- Yellow when targeted
+			},
+		},
+		objectives = {
+			{
+				type = "find_and_destroy",
+				target = "grabon",
+				min_health_percent = 0,  -- Fully destroy
 			},
 		},
 	},

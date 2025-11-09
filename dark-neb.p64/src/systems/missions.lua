@@ -43,6 +43,11 @@ local ok_button_clicked = false
 local mission_2_targeting_checked = false  -- Whether targeting has been initiated
 local mission_2_satellites_destroyed = 0  -- Count of destroyed satellites
 
+-- Mission 3 specific tracking
+local mission_3_grabon_detected = false  -- Whether player has detected the Grabon
+local mission_3_grabon_engaged = false  -- Whether player has engaged with Grabon
+local mission_3_grabon_destroyed = false  -- Whether Grabon is destroyed
+
 -- Mission 1: Movement and Camera Control
 -- Goals: Move camera, rotate ship, move to designated position
 local MISSION_1 = {
@@ -107,9 +112,41 @@ local MISSION_2 = {
 	},
 }
 
+-- Mission 3: Patrol - First day on the job
+-- Goals: Find and destroy the enemy Grabon
+local MISSION_3 = {
+	id = 3,
+	name = "Patrol",
+	description = "Find and destroy the enemy Grabon",
+	objectives = {
+		{
+			id = "search",
+			name = "Search for the enemy",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+		{
+			id = "engage",
+			name = "Engage the Grabon",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+		{
+			id = "destroy",
+			name = "Destroy the Grabon",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+	},
+}
+
 local MISSIONS = {
 	MISSION_1,
 	MISSION_2,
+	MISSION_3,
 }
 
 -- Initialize missions
@@ -155,6 +192,11 @@ function Missions.init(config)
 	-- Reset Mission 2 specific tracking variables
 	mission_2_targeting_checked = false
 	mission_2_satellites_destroyed = 0
+
+	-- Reset Mission 3 specific tracking variables
+	mission_3_grabon_detected = false
+	mission_3_grabon_engaged = false
+	mission_3_grabon_destroyed = false
 
 	-- Show first objective for mission 1
 	Missions.show_next_objective()
@@ -376,6 +418,85 @@ function Missions.update_combat_objective(satellites_destroyed)
 	end
 end
 
+-- Update search objective for Mission 3
+-- Tracks if player has detected the Grabon
+function Missions.update_search_objective(current_target)
+	if current_mission ~= 3 then return end
+
+	local mission = MISSIONS[3]
+	local obj = mission.objectives[1]  -- Search objective
+
+	-- Player has detected Grabon if they have it as current target
+	if current_target and current_target.type == "grabon" and not mission_3_grabon_detected then
+		mission_3_grabon_detected = true
+	end
+
+	-- Progress is either 0 or 1 (detected or not)
+	obj.progress = mission_3_grabon_detected and 1.0 or 0
+
+	-- Mark complete when Grabon detected
+	if mission_3_grabon_detected and not obj.completed then
+		obj.completed = true
+		mission_data[3].objectives["search"].completed = true
+		if not shown_dialogs["search_done"] then
+			shown_dialogs["search_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update engage objective for Mission 3
+-- Tracks if player has engaged combat with Grabon
+function Missions.update_engage_objective(player_health_loss)
+	if current_mission ~= 3 then return end
+
+	local mission = MISSIONS[3]
+	local obj = mission.objectives[2]  -- Engage objective
+
+	-- Player has engaged if they've taken damage from Grabon fire
+	if player_health_loss and player_health_loss > 0 and not mission_3_grabon_engaged then
+		mission_3_grabon_engaged = true
+	end
+
+	-- Progress is either 0 or 1 (engaged or not)
+	obj.progress = mission_3_grabon_engaged and 1.0 or 0
+
+	-- Mark complete when engaged
+	if mission_3_grabon_engaged and not obj.completed then
+		obj.completed = true
+		mission_data[3].objectives["engage"].completed = true
+		if not shown_dialogs["engage_done"] then
+			shown_dialogs["engage_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update destroy objective for Mission 3
+-- Tracks if Grabon is destroyed
+function Missions.update_destroy_objective(grabon_destroyed)
+	if current_mission ~= 3 then return end
+
+	local mission = MISSIONS[3]
+	local obj = mission.objectives[3]  -- Destroy objective
+
+	-- Update destruction status
+	mission_3_grabon_destroyed = grabon_destroyed or false
+
+	-- Progress is either 0 or 1 (destroyed or not)
+	obj.progress = mission_3_grabon_destroyed and 1.0 or 0
+
+	-- Mission complete when Grabon destroyed
+	if mission_3_grabon_destroyed and not obj.completed then
+		obj.completed = true
+		mission_data[3].objectives["destroy"].completed = true
+		if not shown_dialogs["destroy_done"] then
+			shown_dialogs["destroy_done"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
 -- Show the next objective in sequence
 function Missions.show_next_objective()
 	local mission = Missions.get_current_mission()
@@ -406,6 +527,15 @@ function Missions.show_next_objective()
 				elseif i == 3 then
 					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nMove into range and firing arc.\nFire weapons to destroy both satellites"
 				end
+			elseif mission.id == 3 then
+				-- Mission 3 instructions
+				if i == 1 then
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nSearch the sector.\nRight click on the Grabon\nto target it"
+				elseif i == 2 then
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nLet the Grabon attack you.\nEvade and counterattack"
+				elseif i == 3 then
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDestroy the Grabon!\nMove into range,\nfire weapons to destroy it"
+				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
 			end
@@ -421,6 +551,8 @@ function Missions.show_next_objective()
 	-- All objectives complete - show mission-specific success message
 	if current_mission == 2 then
 		dialog_text = "Mission Success!!!\n\nYou've graduated top\nof your class with\nincredible fanfare.\nYou have a bright\nfuture ahead!"
+	elseif current_mission == 3 then
+		dialog_text = "Mission Success!!!\n\nYou've defeated the\nenemy Grabon! Your\nfirst real combat\nvictory. Well done!"
 	else
 		dialog_text = "Mission Success!!!\n\nClick OK to return\nto main menu"
 	end
@@ -469,6 +601,11 @@ function Missions.advance_mission()
 		-- Reset Mission 2 specific tracking variables
 		mission_2_targeting_checked = false
 		mission_2_satellites_destroyed = 0
+
+		-- Reset Mission 3 specific tracking variables
+		mission_3_grabon_detected = false
+		mission_3_grabon_engaged = false
+		mission_3_grabon_destroyed = false
 
 		-- Initialize next mission's data and reset all objective progress
 		local mission = MISSIONS[current_mission]
@@ -868,5 +1005,10 @@ end
 Missions.update_subsystems_objective = Missions.update_subsystems_objective
 Missions.update_targeting_objective = Missions.update_targeting_objective
 Missions.update_combat_objective = Missions.update_combat_objective
+
+-- Exposed update functions for Mission 3 (called from main.lua)
+Missions.update_search_objective = Missions.update_search_objective
+Missions.update_engage_objective = Missions.update_engage_objective
+Missions.update_destroy_objective = Missions.update_destroy_objective
 
 return Missions
