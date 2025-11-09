@@ -530,7 +530,7 @@ function Missions.show_next_objective()
 			elseif mission.id == 3 then
 				-- Mission 3 instructions
 				if i == 1 then
-					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nSearch the sector.\nRight click on the Grabon\nto target it"
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nSearch and destroy."
 				elseif i == 2 then
 					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nLet the Grabon attack you.\nEvade and counterattack"
 				elseif i == 3 then
@@ -897,7 +897,7 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 
 			-- Progress bar for current objective
 			local bar_y = panel_y + panel_height - 12
-			local bar_width = panel_width - 50
+			local bar_width = panel_width - 120
 			local bar_height = 3
 
 			-- Progress bar background

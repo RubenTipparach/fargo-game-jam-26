@@ -139,6 +139,17 @@ local no_energy_message = {
 	max_duration = 1.0  -- Show for 1 second
 }
 
+-- Shield charging state
+local shield_charge = {
+	boxes = {},  -- {1: charge_amount, 2: charge_amount, 3: charge_amount}
+	charge_time = 15.0,  -- 15 seconds per shield box
+}
+
+-- Initialize shield charges
+for i = 1, 3 do
+	shield_charge.boxes[i] = 0
+end
+
 -- Cached position variables for efficiency
 local ship_pos = nil  -- Current ship position (updated each frame)
 
@@ -1208,6 +1219,32 @@ function update_grabon_ai()
 	end
 end
 
+-- Apply shield absorption to damage before applying to health
+-- Shields absorb damage, and fully charged shields are consumed on hit
+function apply_shield_absorption()
+	-- Count how many fully charged shields we have available
+	local charged_shields = 0
+	for i = 1, 3 do
+		if shield_charge.boxes[i] >= 1.0 then
+			charged_shields = charged_shields + 1
+		end
+	end
+
+	-- If we have charged shields, consume one of them
+	if charged_shields > 0 then
+		-- Find and consume the first fully charged shield
+		for i = 1, 3 do
+			if shield_charge.boxes[i] >= 1.0 then
+				shield_charge.boxes[i] = 0  -- Consume the shield
+				printh("SHIELD ACTIVATED: Shield " .. i .. " absorbed damage!")
+				return true  -- Damage was absorbed
+			end
+		end
+	end
+
+	return false  -- No shields available, damage goes through
+end
+
 -- Track energy block hit boxes for interactive allocation
 local energy_block_hitboxes = {}
 
@@ -1219,15 +1256,24 @@ function build_energy_hitboxes()
 	-- Clear hitboxes from last frame
 	energy_block_hitboxes = {}
 
-	for i, system_name in ipairs(systems_list) do
+	local display_index = 0  -- Track actual display position (skipping hidden systems)
+	for _, system_name in ipairs(systems_list) do
 		local system_cfg = energy_cfg.systems[system_name]
+
+		-- Skip hidden systems (but keep position for consistency with drawing)
+		if system_cfg.hidden then
+			goto skip_hitbox
+		end
+
+		display_index = display_index + 1
+
 		local allocated = energy_system[system_name]
 		local capacity = system_cfg.capacity
 
-		-- Calculate position for this system's energy bar
-		local bar_y = energy_cfg.ui_y + (i - 1) * energy_cfg.system_spacing
+		-- Calculate position for this system's energy bar (use display_index to match draw_energy_bars)
+		local bar_y = energy_cfg.ui_y + (display_index - 1) * energy_cfg.system_spacing
 		local bar_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset
-		local padding = energy_cfg.hitbox and energy_cfg.hitbox.padding or 1
+		local padding = energy_cfg.hitbox.padding
 
 		-- Create hitboxes for each energy unit
 		for j = 1, capacity do
@@ -1249,30 +1295,35 @@ function build_energy_hitboxes()
 				orig_x2 = rect_x2, orig_y2 = rect_y2
 			}
 		end
+
+		::skip_hitbox::
 	end
 end
 
 -- Draw energy bars for each system
 function draw_energy_bars()
 	local energy_cfg = Config.energy
-	-- Hide tractor beam UI for now - will implement later
 	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
 
 	-- Draw vertical total energy bar on the left
 	draw_total_energy_bar()
 
-	for i, system_name in ipairs(systems_list) do
-		-- Skip tractor_beam (hidden for now, but keep position for consistency with hitboxes)
-		if system_name == "tractor_beam" then
+	local display_index = 0  -- Track actual display position (skipping hidden systems)
+	for _, system_name in ipairs(systems_list) do
+		local system_cfg = energy_cfg.systems[system_name]
+
+		-- Skip hidden systems (but keep position for consistency with hitboxes)
+		if system_cfg.hidden then
 			goto skip_draw
 		end
 
-		local system_cfg = energy_cfg.systems[system_name]
+		display_index = display_index + 1
+
 		local allocated = energy_system[system_name]
 		local capacity = system_cfg.capacity
 
-		-- Calculate position for this system's energy bar
-		local bar_y = energy_cfg.ui_y + (i - 1) * energy_cfg.system_spacing
+		-- Calculate position for this system's energy bar (use display_index to remove gaps)
+		local bar_y = energy_cfg.ui_y + (display_index - 1) * energy_cfg.system_spacing
 		local bar_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset
 
 		-- Draw discrete rectangles for each energy unit
@@ -1288,12 +1339,29 @@ function draw_energy_bars()
 			-- Draw filled rectangle
 			rectfill(rect_x, rect_y, rect_x2, rect_y2, color)
 
-			-- Draw border
-			rect(rect_x, rect_y, rect_x2, rect_y2, 7)
+			-- Draw border (read from config)
+			rect(rect_x, rect_y, rect_x2, rect_y2, energy_cfg.box.border_color)
 		end
 
-		-- Draw system name label
-		print(system_name, bar_x + capacity * (energy_cfg.bar_width + energy_cfg.bar_spacing) + 5, bar_y, 7)
+		-- Draw system name label with label offset from config
+		local label_x = bar_x + capacity * (energy_cfg.bar_width + energy_cfg.bar_spacing) + system_cfg.label_offset
+		print(system_name, label_x, bar_y, energy_cfg.label.text_color)
+
+		-- Draw sensor damage boost text if enabled in config
+		if system_name == "sensors" and system_cfg.damage_boost and system_cfg.damage_boost.enabled then
+			local damage_bonus = 0
+			if allocated == 1 then
+				damage_bonus = system_cfg.damage_boost.one_box_bonus
+			elseif allocated >= 2 then
+				damage_bonus = system_cfg.damage_boost.two_plus_bonus
+			end
+			if damage_bonus > 0 then
+				local bonus_text = "+" .. flr(damage_bonus * 100) .. "% dmg"
+				local bonus_x = bar_x + system_cfg.damage_boost.text_x_offset
+				local bonus_y = bar_y + energy_cfg.bar_height + system_cfg.damage_boost.text_y_offset
+				print(bonus_text, bonus_x, bonus_y, 10)  -- Yellow text
+			end
+		end
 
 		::skip_draw::
 	end
@@ -1318,13 +1386,14 @@ function draw_total_energy_bar()
 	for i = 1, total_bars do
 		local rect_y = bar_y + (i - 1) * (bar_height + spacing)
 		local rect_y2 = rect_y + bar_height
-		local color = i <= total_allocated and 0 or 7  -- Black if filled (allocated), white if empty
+		-- Use config colors: full for allocated, empty for unallocated
+		local color = i <= total_allocated and energy_cfg.total_bar.color_full or energy_cfg.total_bar.color_empty
 
 		-- Draw filled rectangle
 		rectfill(bar_x, rect_y, bar_x + bar_width, rect_y2, color)
 
-		-- Draw border
-		rect(bar_x, rect_y, bar_x + bar_width, rect_y2, 7)
+		-- Draw border (read from config)
+		rect(bar_x, rect_y, bar_x + bar_width, rect_y2, energy_cfg.total_bar.border_color)
 	end
 
 	-- Draw "E" label above total energy bar; we dont need this right now.
@@ -1375,6 +1444,17 @@ function handle_energy_clicks(mx, my)
 				-- Sync the Config energy with the local energy_system
 				Config.energy.systems[system_name].allocated = energy_system[system_name]
 				printh("Energy allocated: " .. system_name .. " = " .. energy_system[system_name])
+
+				-- Reset shield charges if shield allocation changed
+				if system_name == "shields" then
+					local new_allocated = energy_system[system_name]
+					-- Reset charges for shields beyond the new allocation
+					for i = new_allocated + 1, 3 do
+						shield_charge.boxes[i] = 0
+					end
+					printh("Shield allocation changed to " .. new_allocated .. ", resetting excess shields")
+				end
+
 				return true
 			end
 		end
@@ -1514,7 +1594,18 @@ function _update()
 
 	-- Check if mouse is over energy UI area (but not weapons UI or help panel)
 	-- Help panel is at (180, 10) with width 200, so it extends to x=380
-	local over_energy_ui = mx < 180 and my < 100
+	-- Energy UI extends from ui_x to system_bar_x_offset + (max_capacity * bar_width + spacing)
+	-- Vertically: from ui_y to ui_y + (num_visible_systems - 1) * system_spacing + bar_height
+	local energy_cfg = Config.energy
+	local num_visible_systems = 0
+	for _, system_name in ipairs({"weapons", "impulse", "shields", "tractor_beam", "sensors"}) do
+		if not energy_cfg.systems[system_name].hidden then
+			num_visible_systems = num_visible_systems + 1
+		end
+	end
+	local energy_max_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset + (4 * (energy_cfg.bar_width + energy_cfg.bar_spacing))  -- Max 4 boxes per system
+	local energy_max_y = energy_cfg.ui_y + (num_visible_systems - 1) * energy_cfg.system_spacing + energy_cfg.bar_height + 5  -- +5 padding
+	local over_energy_ui = mx >= energy_cfg.ui_x and mx < energy_max_x and my >= energy_cfg.ui_y and my < energy_max_y
 
 	-- Check if button is newly pressed this frame (was not pressed last frame, is pressed now)
 	local button_pressed = (mb & 1 == 1) and not last_mouse_button_state
@@ -1561,6 +1652,9 @@ function _update()
 						if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
 							target_pos = current_selected_target.position
 							target_ref = current_selected_target  -- Pass enemy object, not config
+						elseif current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position then
+							target_pos = current_selected_target.position
+							target_ref = current_selected_target  -- Pass Grabon enemy object
 						elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 							target_pos = Config.planet.position
 							target_ref = Config.planet
@@ -1782,7 +1876,7 @@ function _update()
 		-- Check fire button click
 		if mb & 1 == 1 then
 			if mx >= button_x and mx <= button_x + button_width and my >= button_y and my <= button_y + button_height then
-				if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
+				if current_selected_target and (current_selected_target.type == "satellite" or current_selected_target.type == "grabon") and current_selected_target.position then
 					-- Check if we have enough weapons energy to fire (need 2 bars)
 					if energy_system.weapons >= 2 then
 						-- Fire photon beam at satellite
@@ -1831,6 +1925,28 @@ function _update()
 		end
 	end
 
+	-- Update shield charging (shields charge sequentially based on allocated energy)
+	-- Each allocated shield box takes 15 seconds to charge sequentially
+	local allocated_shields = energy_system.shields
+	for i = 1, 3 do
+		if i <= allocated_shields then
+			-- This shield box should be charging
+			-- Check if previous box is fully charged (allow sequential charging)
+			local previous_box_charged = (i == 1) or (shield_charge.boxes[i-1] >= 1.0)
+
+			if previous_box_charged then
+				-- Charge this box
+				shield_charge.boxes[i] = shield_charge.boxes[i] + 1/60 / shield_charge.charge_time  -- 60fps framerate
+				if shield_charge.boxes[i] > 1.0 then
+					shield_charge.boxes[i] = 1.0
+				end
+			end
+		else
+			-- This shield box is not allocated, reset it
+			shield_charge.boxes[i] = 0
+		end
+	end
+
 	-- Handle auto-fire for weapons with auto-fire enabled
 	for i = 1, #Config.weapons do
 		local state = weapon_states[i]
@@ -1843,6 +1959,9 @@ function _update()
 			if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
 				target_pos = current_selected_target.position
 				target_ref = current_selected_target  -- Pass enemy object, not config
+			elseif current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position then
+				target_pos = current_selected_target.position
+				target_ref = current_selected_target  -- Pass Grabon enemy object
 			elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 				target_pos = Config.planet.position
 				target_ref = Config.planet
@@ -1885,6 +2004,8 @@ function _update()
 
 		-- Get position from current selected target object
 		if current_selected_target.type == "satellite" and current_selected_target.position then
+			target_pos = current_selected_target.position
+		elseif current_selected_target.type == "grabon" and current_selected_target.position then
 			target_pos = current_selected_target.position
 		elseif current_selected_target.type == "planet" then
 			target_pos = Config.planet.position
@@ -2196,7 +2317,14 @@ function _update()
 					end
 
 					-- Apply damage based on armor
-					WeaponEffects.apply_collision_damage(player_health_obj)
+					-- First check if shields can absorb damage
+					local shield_absorbed = apply_shield_absorption()
+					if not shield_absorbed then
+						-- Shields didn't absorb, apply damage to health
+						WeaponEffects.apply_collision_damage(player_health_obj)
+					else
+						printh("Shield absorbed incoming damage!")
+					end
 					WeaponEffects.apply_collision_damage(enemy)
 
 					-- Sync player health back from player_health_obj
@@ -2428,6 +2556,43 @@ function draw_no_energy_message()
 	print(msg_text, box_x + 5, box_y + 6, 7)  -- White text
 end
 
+-- Draw shield charge status under health bar (slider-style bars)
+function draw_shield_status()
+	local allocated_shields = energy_system.shields
+
+	-- Get configuration for shield sliders
+	local shield_cfg = Config.shield_sliders
+	local panel_x = shield_cfg.x
+	local panel_y = shield_cfg.y
+	local bar_width = shield_cfg.bar_width
+	local bar_height = shield_cfg.bar_height
+	local bar_spacing = shield_cfg.bar_spacing
+	local fill_color = shield_cfg.fill_color
+	local empty_color = shield_cfg.empty_color
+	local border_color = shield_cfg.border_color
+
+	-- Draw title
+	print("shields", panel_x, panel_y + shield_cfg.label_y_offset, border_color)
+
+	-- Draw 3 shield charge bars side by side
+	for i = 1, 3 do
+		local bar_x = panel_x + (i - 1) * (bar_width + bar_spacing)
+		local bar_y = panel_y
+
+		-- Draw background (dark - empty color)
+		rectfill(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, empty_color)
+
+		-- Draw charge progress (fill from left to right) - only if allocated
+		if i <= allocated_shields and shield_charge.boxes[i] > 0 then
+			local charge_fill_width = (bar_width - 2) * shield_charge.boxes[i]
+			rectfill(bar_x + 1, bar_y + 1, bar_x + 1 + charge_fill_width, bar_y + bar_height - 1, fill_color)
+		end
+
+		-- Draw border (configured color)
+		rect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, border_color)
+	end
+end
+
 function _draw()
 	cls(0)  -- Clear to dark blue
 
@@ -2516,6 +2681,30 @@ function _draw()
 			-- Add satellite faces to all_faces
 			for i = 1, #satellite_faces do
 				add(all_faces, satellite_faces[i])
+			end
+		end
+	end
+
+	-- Render all Grabons from enemy_ships array
+	for _, enemy in ipairs(enemy_ships) do
+		if enemy.type == "grabon" and enemy.model and enemy.position and not enemy.is_destroyed then
+			local grabon_pos = enemy.position
+			local grabon_faces = RendererLit.render_mesh(
+				enemy.model.verts, enemy.model.faces, camera,
+				grabon_pos.x, grabon_pos.y, grabon_pos.z,
+				nil,  -- sprite override
+				light_dir,  -- light direction (directional light)
+				nil,  -- light radius (unused for directional)
+				light_brightness,  -- light brightness
+				ambient,  -- ambient light
+				false,  -- is_ground
+				0, enemy.heading, 0,  -- pitch, yaw (heading), roll
+				Config.camera.render_distance
+			)
+
+			-- Add Grabon faces to all_faces
+			for i = 1, #grabon_faces do
+				add(all_faces, grabon_faces[i])
 			end
 		end
 	end
@@ -3027,9 +3216,12 @@ function _draw()
 	-- Draw no energy feedback message
 	draw_no_energy_message()
 
-	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
-	-- Hide health bar if satellite is destroyed
-	if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position and not current_selected_target.is_destroyed then
+	-- Draw shield charge status in lower right
+	draw_shield_status()
+
+	-- Draw target health bar and indicator if satellite/Grabon is targeted (hovering above target in screen space)
+	-- Hide health bar if satellite/Grabon is destroyed
+	if current_selected_target and (current_selected_target.type == "satellite" or current_selected_target.type == "grabon") and current_selected_target.position and not current_selected_target.is_destroyed then
 		-- Project satellite position to screen to draw health bar above it
 		local sat_pos = current_selected_target.position
 		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)

@@ -163,6 +163,21 @@ Config.health = {
 	health_bar_y = 10,  -- Top left Y position
 }
 
+-- Shield charge sliders configuration
+Config.shield_sliders = {
+	x = 10,  -- X position (matches health bar)
+	y = 22,  -- Y position (health_bar_y + health_bar_height + 2)
+	bar_width = 18,  -- Width of each shield bar
+	bar_height = 10,  -- Height of each shield bar
+	bar_spacing = 2,  -- Space between bars
+	label_y_offset = -8,  -- Offset for "shields" label above bars
+
+	-- Shield fill colors
+	fill_color = 12,  -- Color when shield is charging/charged (blue)
+	empty_color = 0,  -- Color when shield is empty/not charged (black)
+	border_color = 7,  -- Border color (white)
+}
+
 -- Collision damage configuration
 Config.collision = {
 	base_damage = 5,  -- Base damage per frame during collision
@@ -233,41 +248,74 @@ Config.energy = {
 			allocated = 4,  -- Auto-allocate all 4 bars to weapons for simplicity
 			color_full = 24,  -- maroon
 			color_empty = 0,  -- Black/dark
+			label_offset = 5,  -- X offset from last box to label text
 		},
 		impulse = {
 			capacity = 4,
 			allocated = 2,
 			color_full = 11,  -- green
 			color_empty = 0,
+			label_offset = 5,  -- X offset from last box to label text
 		},
 		shields = {
 			capacity = 3,
 			allocated = 0,
 			color_full = 12,  -- blue
 			color_empty = 0,
+			label_offset = 5,  -- X offset from last box to label text
 		},
 		tractor_beam = {
 			capacity = 2,
 			allocated = 0,
 			color_full = 18,  -- purple
 			color_empty = 0,
+			label_offset = 5,  -- X offset from last box to label text
+			hidden = true,  -- Hide tractor_beam UI for now
 		},
 		sensors = {
 			capacity = 2,
 			allocated = 0,
 			color_full = 17,  -- cyan
 			color_empty = 0,
+			label_offset = 5,  -- X offset from last box to label text
+			-- Sensor-specific UI config
+			damage_boost = {
+				enabled = true,  -- Show damage boost text
+				text_y_offset = 2,  -- Offset below sensor boxes
+				text_x_offset = 0,  -- X offset from bar_x
+				one_box_bonus = 0.5,  -- 50% bonus with 1 box
+				two_plus_bonus = 0.7,  -- 70% bonus with 2+ boxes
+			},
 		},
 	},
 
-	-- UI positions
-	ui_x = 10,  -- Left side position (vertical total energy bar)
-	ui_y = 30,  -- Below health bar
-	system_spacing = 15,  -- Vertical space between each system's energy bar
-	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar
+	-- UI POSITIONING (hitboxes will automatically use these values for ALL systems including sensors)
+	ui_x = 10,  -- X position: left side position (vertical total energy bar) - HITBOXES MOVE WITH THIS
+	ui_y = 40,  -- Y position: top of energy display (below health bar) - HITBOXES MOVE WITH THIS
+	system_spacing = 15,  -- Vertical space between each system's energy bar - HITBOXES MOVE WITH THIS
+	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar - HITBOXES MOVE WITH THIS
+
+	-- System label styling
+	label = {
+		color = 7,  -- White text
+		text_color = 7,  -- Text color for system names
+	},
+
+	-- Total energy bar styling (vertical bar on the left)
+	total_bar = {
+		color_full = 0,  -- Black for filled (allocated) energy
+		color_empty = 7,  -- White for empty (unallocated) energy
+		border_color = 7,  -- White border
+	},
+
+	-- System box styling
+	box = {
+		border_color = 7,  -- White border around all boxes
+	},
 
 	-- Hitbox configuration for energy allocation clicks
 	-- These define the clickable areas for adjusting energy allocation
+	-- NOTE: Hitboxes automatically adjust with ui_x, ui_y, and system_spacing changes
 	hitbox = {
 		enabled = true,  -- Enable/disable hitbox detection
 		padding = 1,  -- Extra padding around bars for easier clicking
