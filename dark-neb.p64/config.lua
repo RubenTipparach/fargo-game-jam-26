@@ -54,7 +54,7 @@ Config.ship = {
 	target_heading = 0,  -- Target heading to turn towards (0-1 range)
 	turn_rate = 0.0008,  -- Turns per frame (higher = faster turns)
 	heading_arc_radius = 5,  -- Radius of the heading arc indicator
-	heading_arc_segments = 16,  -- Number of segments for the arc
+	heading_arc_segments = 8,  -- Number of segments for the arc
 	-- Box collider for collision detection
 	collider = {
 		type = "box",
@@ -219,31 +219,31 @@ Config.energy = {
 		weapons = {
 			capacity = 4,
 			allocated = 2,
-			color_full = 11,  -- Bright cyan
+			color_full = 9,  -- orange
 			color_empty = 0,  -- Black/dark
 		},
 		impulse = {
 			capacity = 4,
 			allocated = 2,
-			color_full = 8,  -- Orange
+			color_full = 11,  -- green
 			color_empty = 0,
 		},
 		shields = {
 			capacity = 3,
 			allocated = 0,
-			color_full = 10,  -- Yellow
+			color_full = 12,  -- blue
 			color_empty = 0,
 		},
 		tractor_beam = {
 			capacity = 2,
 			allocated = 0,
-			color_full = 13,  -- Blue
+			color_full = 18,  -- purple
 			color_empty = 0,
 		},
 		sensors = {
 			capacity = 2,
 			allocated = 0,
-			color_full = 12,  -- Purple
+			color_full = 17,  -- cyan
 			color_empty = 0,
 		},
 	},
@@ -251,8 +251,8 @@ Config.energy = {
 	-- UI positions
 	ui_x = 10,  -- Left side position (vertical total energy bar)
 	ui_y = 30,  -- Below health bar
-	system_spacing = 35,  -- Vertical space between each system's energy bar
-	system_bar_x_offset = 50,  -- Horizontal offset for system energy bars from total energy bar
+	system_spacing = 15,  -- Vertical space between each system's energy bar
+	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar
 }
 
 return Config

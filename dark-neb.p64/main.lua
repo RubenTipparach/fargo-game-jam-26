@@ -29,6 +29,7 @@ Explosion = include("src/particles/explosion.lua")
 UIRenderer = include("src/ui/ui_renderer.lua")
 Panel = include("src/ui/panel.lua")
 Button = include("src/ui/button.lua")
+ArcUI = include("src/ui/arc_ui.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -1799,93 +1800,13 @@ function _draw()
 	-- Calculate angle difference to see if we need to draw the compass
 	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
 
-	-- Debug: Print values
-	-- if target_heading_dir.x ~= ship_heading_dir.x or target_heading_dir.z ~= ship_heading_dir.z then
-	-- 	printh("arc check - ship_speed: " .. ship_speed .. ", angle_diff: " .. angle_diff)
-	-- end
-
-	-- Draw compass if ship is moving or if there's a significant heading difference
-	-- Lowered thresholds from 0.01 to 0.001 for easier testing
-	if angle_diff > 0.001 then
-		local ship_x = Config.ship.position.x
-		local ship_z = Config.ship.position.z
-		local ship_y = Config.ship.position.y  -- Raise arc above ship for visibility
-		local arc_radius = Config.ship.heading_arc_radius
-		local segments = Config.ship.heading_arc_segments
-
-		-- Draw current ship heading line (blue/cyan)
-		local current_x = ship_x + ship_heading_dir.x * arc_radius
-		local current_z = ship_z + ship_heading_dir.z * arc_radius
-		draw_line_3d(ship_x, ship_y, ship_z, current_x, ship_y, current_z, camera, 13)  -- Blue (cyan)
-
-		-- Draw arc by interpolating between current and target directions
-		local arc_color = 10  -- Yellow
-
-		-- Convert to quaternions once, outside the loop
-		local q_current = dir_to_quat(ship_heading_dir)
-		local q_target = dir_to_quat(target_heading_dir)
-
-		printh("arc quat current: w=" .. q_current.w .. " x=" .. q_current.x .. " y=" .. q_current.y .. " z=" .. q_current.z)
-		printh("arc quat target: w=" .. q_target.w .. " x=" .. q_target.x .. " y=" .. q_target.y .. " z=" .. q_target.z)
-
-		for i = 0, segments - 1 do
-			local t1 = i / segments
-			local t2 = (i + 1) / segments
-
-			-- Linear quaternion interpolation between current and target
-			-- Simple lerp: q = q1 + t * (q2 - q1), then normalize
-			local q_arc1 = {
-				w = q_current.w + t1 * (q_target.w - q_current.w),
-				x = q_current.x + t1 * (q_target.x - q_current.x),
-				y = q_current.y + t1 * (q_target.y - q_current.y),
-				z = q_current.z + t1 * (q_target.z - q_current.z)
-			}
-			local q_arc2 = {
-				w = q_current.w + t2 * (q_target.w - q_current.w),
-				x = q_current.x + t2 * (q_target.x - q_current.x),
-				y = q_current.y + t2 * (q_target.y - q_current.y),
-				z = q_current.z + t2 * (q_target.z - q_current.z)
-			}
-
-			-- Normalize quaternions
-			local len1 = sqrt(q_arc1.w*q_arc1.w + q_arc1.x*q_arc1.x + q_arc1.y*q_arc1.y + q_arc1.z*q_arc1.z)
-			if len1 > 0.0001 then
-				q_arc1.w = q_arc1.w / len1
-				q_arc1.x = q_arc1.x / len1
-				q_arc1.y = q_arc1.y / len1
-				q_arc1.z = q_arc1.z / len1
-			end
-
-			local len2 = sqrt(q_arc2.w*q_arc2.w + q_arc2.x*q_arc2.x + q_arc2.y*q_arc2.y + q_arc2.z*q_arc2.z)
-			if len2 > 0.0001 then
-				q_arc2.w = q_arc2.w / len2
-				q_arc2.x = q_arc2.x / len2
-				q_arc2.y = q_arc2.y / len2
-				q_arc2.z = q_arc2.z / len2
-			end
-
-			local dir1 = quat_to_dir(q_arc1)
-			local dir2 = quat_to_dir(q_arc2)
-
-			printh("arc segment " .. i .. ": t1=" .. t1 .. " t2=" .. t2 .. " dir1=(" .. dir1.x .. "," .. dir1.z .. ") dir2=(" .. dir2.x .. "," .. dir2.z .. ")")
-
-			-- Calculate 3D positions on the arc
-			local x1 = ship_x + dir1.x * arc_radius
-			local z1 = ship_z + dir1.z * arc_radius
-			local x2 = ship_x + dir2.x * arc_radius
-			local z2 = ship_z + dir2.z * arc_radius
-
-			printh("arc line " .. i .. ": (" .. x1 .. "," .. ship_y .. "," .. z1 .. ") -> (" .. x2 .. "," .. ship_y .. "," .. z2 .. ")")
-
-			-- Project to screen and draw line
-			draw_line_3d(x1, ship_y, z1, x2, ship_y, z2, camera, arc_color)
-		end
-
-		-- Draw target heading line (bright yellow)
-		local target_x = ship_x + target_heading_dir.x * arc_radius
-		local target_z = ship_z + target_heading_dir.z * arc_radius
-		draw_line_3d(ship_x, ship_y, ship_z, target_x, ship_y, target_z, camera, 11)  -- Bright yellow
-	end
+	-- Draw heading arc using ArcUI module
+	local utilities = {
+		draw_line_3d = draw_line_3d,
+		dir_to_quat = dir_to_quat,
+		quat_to_dir = quat_to_dir
+	}
+	ArcUI.draw_heading_arc(ship_heading_dir, target_heading_dir, angle_diff, camera, Config, utilities)
 
 	-- local ship_pos = Config.ship.position
 	-- local heading_length = 20
