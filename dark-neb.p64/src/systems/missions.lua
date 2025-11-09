@@ -33,6 +33,9 @@ local next_objective_index = 1  -- Track which objective to show next
 local help_panel_x = 180  -- Top-left corner
 local help_panel_y = 10
 
+-- Panel visibility toggle
+local show_objective_panel = true  -- Whether to show the objective panel
+
 -- Track if OK button was already clicked to prevent continuous activation
 local ok_button_clicked = false
 
@@ -396,20 +399,20 @@ function Missions.show_next_objective()
 			if mission.id == 1 then
 				-- Mission 1 instructions
 				if i == 1 then
-					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\n\nLeft click+drag:\nRotate camera"
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nLeft click+drag:\n\nRotate camera"
 				elseif i == 2 then
-					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\n\nRight click+drag:\nRotate ship"
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nRight click+drag:\n\nRotate ship"
 				elseif i == 3 then
-					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\n\nDrag the speed bar on the right:\nMove to green cube"
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDrag the speed bar on the right:\n\nMove to green cube"
 				end
 			elseif mission.id == 2 then
 				-- Mission 2 instructions
 				if i == 1 then
-					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\n\nClick on energy bars\nto allocate energy\nto subsystems"
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nClick on energy bars\nto allocate energy\nto subsystems"
 				elseif i == 2 then
-					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\n\nRight click on\na satellite to\ntarget it"
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nRight click on\na satellite to\ntarget it"
 				elseif i == 3 then
-					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\n\nMove into range\nand firing arc.\nFire weapons to\ndestroy both\nsatellites"
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nMove into range\nand firing arc.\nFire weapons to\ndestroy both\nsatellites"
 				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
@@ -581,10 +584,43 @@ end
 -- Draw help panel overlay (call this LAST, after all other UI)
 -- @param mouse_x, mouse_y: optional mouse coordinates for button hover detection
 function Missions.draw_help_panel(mouse_x, mouse_y)
+	-- Draw toggle button in top-right corner
+	local toggle_x = 470
+	local toggle_y = 10
+	local toggle_size = 12
+
+	-- Check if mouse is hovering over toggle
+	local toggle_hovered = mouse_x and mouse_y and
+		mouse_x >= toggle_x and mouse_x <= toggle_x + toggle_size and
+		mouse_y >= toggle_y and mouse_y <= toggle_y + toggle_size
+
+	-- Draw toggle button
+	local toggle_color = show_objective_panel and 10 or 1
+	rectfill(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, toggle_color)
+	rect(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, 7)
+
+	-- Draw toggle text ("H" for hide/show)
+	print("H", toggle_x + 4, toggle_y + 3, toggle_hovered and 11 or 0)
+
 	-- Only draw dialog when it's visible (instruction text or mission success message)
-	if dialog_visible then
+	if dialog_visible and show_objective_panel then
 		Missions.draw_dialog(dialog_text, mouse_x, mouse_y)
 	end
+end
+
+-- Toggle objective panel visibility
+function Missions.toggle_objective_panel()
+	show_objective_panel = not show_objective_panel
+end
+
+-- Get objective panel visibility state
+function Missions.is_objective_panel_visible()
+	return show_objective_panel
+end
+
+-- Set objective panel visibility state
+function Missions.set_objective_panel_visible(visible)
+	show_objective_panel = visible
 end
 
 -- Draw UI pointers for tutorials (e.g., highlight weapons UI, buttons)
@@ -692,8 +728,33 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 
 	-- Draw text (word wrap for narrower panel)
 	local text_x = panel_x + 2
-	local text_y = panel_y + 15
+	local text_y = panel_y + 25
 	print(text, text_x, text_y, 7)
+
+	-- Draw current objective progress bar (if not success message)
+	if not is_success_message then
+		local mission = Missions.get_current_mission()
+		if mission and mission.objectives[next_objective_index] then
+			local current_obj = mission.objectives[next_objective_index]
+
+			-- Progress bar for current objective
+			local bar_y = panel_y + panel_height - 12
+			local bar_width = panel_width - 50
+			local bar_height = 3
+
+			-- Progress bar background
+			rectfill(panel_x + 2, bar_y, panel_x + 2 + bar_width, bar_y + bar_height, 1)
+
+			-- Progress bar fill
+			local fill_width = bar_width * current_obj.progress
+			if fill_width > 0 then
+				rectfill(panel_x + 2, bar_y, panel_x + 2 + fill_width, bar_y + bar_height, 10)
+			end
+
+			-- Progress bar border
+			rect(panel_x + 2, bar_y, panel_x + 2 + bar_width, bar_y + bar_height, 7)
+		end
+	end
 
 	-- Draw OK button for mission success message
 	if is_success_message then
@@ -718,37 +779,6 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 		-- Draw button text (adjust color for visibility on bright background)
 		local text_color = button_hovered and 0 or 7
 		print("OK", button_x + 12, button_y + 3, text_color)
-	end
-
-	-- Draw overall mission progress slider below dialog panel
-	local mission = Missions.get_current_mission()
-	if mission then
-		local slider_x = panel_x
-		local slider_y = panel_y + panel_height + 8
-		local slider_width = panel_width
-		local slider_height = 3
-
-		-- Calculate overall mission progress (average of all objectives)
-		local total_progress = 0
-		for _, obj in ipairs(mission.objectives) do
-			total_progress = total_progress + obj.progress
-		end
-		total_progress = total_progress / #mission.objectives
-
-		-- Draw progress label
-		print("Overall Progress", slider_x, slider_y - 8, 7)
-
-		-- Slider background
-		rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 1)
-
-		-- Slider fill
-		local slider_fill = slider_width * total_progress
-		if slider_fill > 0 then
-			rectfill(slider_x, slider_y, slider_x + slider_fill, slider_y + slider_height, 10)
-		end
-
-		-- Slider border
-		rect(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 7)
 	end
 end
 

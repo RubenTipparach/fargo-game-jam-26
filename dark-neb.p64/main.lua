@@ -1287,6 +1287,16 @@ function _update()
 	-- Cache ship position at start of update
 	ship_pos = Config.ship.position
 
+	-- Check for objective panel toggle click (top-right corner)
+	local panel_toggle_x = 470
+	local panel_toggle_y = 10
+	local panel_toggle_size = 12
+	if (mb & 1 == 1) and not last_mouse_button_state then  -- Click detected
+		if mx >= panel_toggle_x and mx <= panel_toggle_x + panel_toggle_size and my >= panel_toggle_y and my <= panel_toggle_y + panel_toggle_size then
+			Missions.toggle_objective_panel()
+		end
+	end
+
 	-- Mouse orbit controls (only in gameplay)
 
 	-- Check if mouse is over slider
