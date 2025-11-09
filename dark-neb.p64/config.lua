@@ -139,23 +139,6 @@ Config.slider = {
 	text_prefix = "speed: ",  -- Text label prefix
 }
 
--- Satellite configuration
-Config.satellite = {
-	position = {x = -30, y = 0, z = -40},
-	rotation = {pitch = 0, yaw = 0, roll = 0},
-	model_file = "models/satelite.obj",
-	sprite_id = 2,  -- Texture sprite
-	max_health = 100,  -- Health of satellite
-	current_health = 100,  -- Current health
-	sensor_range = 200,  -- Range for sensor detection (no fog of war for tutorial)
-	-- Box collider for targeting
-	collider = {
-		type = "box",
-		half_size = {x = 2, y = 2, z = 2},
-	},
-	bounding_box_color_default = 13,  -- Blue (cyan)
-	bounding_box_color_hover = 10,  -- Yellow
-}
 
 -- Photon beam configuration
 Config.photon_beam = {
@@ -273,11 +256,45 @@ Config.energy = {
 Config.missions = {
 	-- Mission 1: Tutorial/Starting mission
 	mission_1 = {
-		name = "Mission 1: Tutotrial",
-		description = "Destroy the satellite",
+		name = "Mission 1: Tutorial",
+		description = "Destroy the satellites",
 		ship_start = {x = 0, y = 0, z = 0},
-		satellite_start = {x = -30, y = 0, z = 40},
 		planet_start = {x = 50, y = 0, z = 0},
+		-- Satellite definitions for this mission
+		satellites = {
+			{
+				id = "satellite_1",
+				position = {x = -30, y = 0, z = -40},
+				rotation = {pitch = 0, yaw = 0, roll = 0},
+				model_file = "models/satelite.obj",
+				sprite_id = 2,
+				max_health = 100,
+				current_health = 100,
+				sensor_range = 200,
+				collider = {
+					type = "box",
+					half_size = {x = 2, y = 2, z = 2},
+				},
+				bounding_box_color_default = 13,  -- Blue (cyan)
+				bounding_box_color_hover = 10,  -- Yellow
+			},
+			{
+				id = "satellite_2",
+				position = {x = 30, y = 0, z = 50},
+				rotation = {pitch = 0, yaw = 0, roll = 0},
+				model_file = "models/satelite.obj",
+				sprite_id = 2,
+				max_health = 100,
+				current_health = 100,
+				sensor_range = 200,
+				collider = {
+					type = "box",
+					half_size = {x = 2, y = 2, z = 2},
+				},
+				bounding_box_color_default = 13,  -- Blue (cyan)
+				bounding_box_color_hover = 10,  -- Yellow
+			},
+		},
 		objectives = {
 			{
 				type = "destroy",

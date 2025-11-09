@@ -98,7 +98,7 @@ local raycast_z = nil
 -- Game state
 local current_health = Config.health.max_health
 local is_dead = false
-local satellite_destroyed = false  -- Track if satellite has been destroyed
+local destroyed_enemies = {}  -- Track which enemy ships have been destroyed (by ID)
 local death_time = 0
 local game_state = "menu"  -- "menu", "playing", "out_of_bounds", "game_over"
 local out_of_bounds_time = 0  -- Time spent out of bounds
@@ -150,12 +150,14 @@ init_weapon_states()
 -- @param weapon_id: weapon index (1-based)
 -- @return: true if weapon is charged and has a target, false otherwise
 function is_weapon_ready(weapon_id)
-	if not selected_target then
+	if not current_selected_target then
+		printh("DEBUG is_weapon_ready: No target selected")
 		return false  -- No target selected
 	end
 
 	local state = weapon_states[weapon_id]
-	if not state or state.charge < 1.0 then
+	printh("DEBUG is_weapon_ready: weapon_id=" .. weapon_id .. ", current_target=" .. (current_selected_target.id or "unknown") .. ", charge=" .. state.charge)
+	if state.charge < 0.999 then
 		return false  -- Weapon not fully charged
 	end
 
@@ -648,15 +650,24 @@ local planet_rotation = 0
 local particle_trails = {}  -- Array of {x1, z1, x2, z2, age, lifetime}
 
 -- Targeting and weapons
-local satellite_hovered = false  -- Whether mouse is hovering over satellite
-local selected_target = nil  -- Currently selected target ("satellite" or nil)
+local hovered_target = nil  -- Currently hovered target object (satellite, planet, enemy ship, etc)
+local current_selected_target = nil  -- Currently selected target object for firing/tracking
 local photon_beams = {}  -- Array of active photon beams
 local auto_fire_timer = 0  -- Timer for auto-fire
 local camera_locked_to_target = false  -- Whether camera is locked to target or free rotating
 local camera_pitch_before_targeting = nil  -- Store pitch value before targeting for restoration
 
--- Satellite state (separate from config - allows for dynamic position updates)
-local satellite_pos = nil  -- Current satellite position (initialized in _init)
+-- Enemy ships array - holds all targetable enemy objects
+-- Structure per object: {
+--   id = "satellite_1", "satellite_2", etc,
+--   type = "satellite" | "planet" | "enemy_ship",
+--   position = {x, y, z},  -- Current position (can be updated dynamically)
+--   config = reference to Config object (satellite, planet, etc),
+--   model = model data (model_satellite, model_planet, etc),
+--   is_destroyed = boolean,
+--   health = current_health (mirrors config.current_health)
+-- }
+local enemy_ships = {}  -- Array of all enemy ships/satellites in the level
 
 
 
@@ -914,21 +925,45 @@ function _init()
 		printh("WARNING: Failed to load " .. Config.ship.model_file)
 	end
 
-	-- Try to load the satellite model (from config)
-	model_satellite = load_obj(Config.satellite.model_file)
+	-- Initialize enemy_ships array from mission config satellites
+	enemy_ships = {}
+	local mission = Config.missions.mission_1
 
-	if model_satellite then
-		printh("Satellite loaded: " .. #model_satellite.verts .. " vertices, " .. #model_satellite.faces .. " faces")
-	else
-		printh("WARNING: Failed to load " .. Config.satellite.model_file)
+	if mission.satellites and #mission.satellites > 0 then
+		-- Load satellite model from first satellite config
+		local first_sat_config = mission.satellites[1]
+		model_satellite = load_obj(first_sat_config.model_file)
+
+		if model_satellite then
+			printh("Satellite loaded: " .. #model_satellite.verts .. " vertices, " .. #model_satellite.faces .. " faces")
+		else
+			printh("WARNING: Failed to load " .. first_sat_config.model_file)
+		end
+
+		-- Create enemy ship objects from mission satellites
+		for i, sat_config in ipairs(mission.satellites) do
+			-- Create position reference
+			local sat_position = {
+				x = sat_config.position.x,
+				y = sat_config.position.y,
+				z = sat_config.position.z
+			}
+
+			-- Create enemy ship object
+			local enemy = {
+				id = sat_config.id,
+				type = "satellite",
+				position = sat_position,
+				config = sat_config,
+				model = model_satellite,
+				is_destroyed = false,
+				health = sat_config.current_health
+			}
+
+			table.insert(enemy_ships, enemy)
+
+		end
 	end
-
-	-- Initialize satellite position from config (can be updated dynamically later)
-	satellite_pos = {
-		x = Config.missions.mission_1.satellite_start.x,
-		y = Config.missions.mission_1.satellite_start.y,
-		z = Config.missions.mission_1.satellite_start.z
-	}
 end
 
 -- Track energy block hit boxes for interactive allocation
@@ -1113,15 +1148,17 @@ function _update()
 				function() return {x = 0, y = 0, z = 0} end  -- Spawn at ship origin
 			)
 
-			-- Satellite: spawn smoke when health < 30%
+		-- Register smoke spawners for all enemy ships
+		for _, enemy in ipairs(enemy_ships) do
 			WeaponEffects.register_smoke_spawner(
-				Config.satellite,
+				enemy,
 				0.5,  -- Spawn smoke when below 30% health
-				function() return {x = Config.satellite.position.x, y = Config.satellite.position.y, z = Config.satellite.position.z} end
+				function() return {x = enemy.position.x, y = enemy.position.y, z = enemy.position.z} end
 			)
 		end
 		return  -- Skip gameplay updates while in menu
-	end
+	end  -- Close if Menu.update(...)
+	end  -- Close if game_state == "menu"
 
 	-- Cache ship position at start of update
 	ship_pos = Config.ship.position
@@ -1160,15 +1197,15 @@ function _update()
 				local has_energy = energy_system.weapons >= weapon.energy_cost
 				local is_charged = has_energy and state.charge >= 1.0
 
-				if is_charged and selected_target then
+				if is_charged and current_selected_target then
 					-- Fire beam at selected target
 					local target_pos = nil
 					local target_ref = nil
 
-					if selected_target == "satellite" and model_satellite and satellite_pos then
-						target_pos = satellite_pos  -- Use current rendered position, not config value
-						target_ref = Config.satellite
-					elseif selected_target == "planet" and model_planet then
+					if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
+						target_pos = current_selected_target.position
+						target_ref = current_selected_target.config
+					elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 						target_pos = Config.planet.position
 						target_ref = Config.planet
 					end
@@ -1252,32 +1289,26 @@ function _update()
 	-- Always update raycast position for crosshair visualization
 	raycast_x, raycast_z = raycast_to_ground_plane(mx, my, camera)
 
-	-- Check if mouse is hovering over satellite bounding box
-	satellite_hovered = false
-	if model_satellite and satellite_pos then
-		local sat_pos = satellite_pos
-		local sat_collider = Config.satellite.collider
-		local sat_box_min = {
-			x = sat_pos.x - sat_collider.half_size.x,
-			y = sat_pos.y - sat_collider.half_size.y,
-			z = sat_pos.z - sat_collider.half_size.z,
-		}
-		local sat_box_max = {
-			x = sat_pos.x + sat_collider.half_size.x,
-			y = sat_pos.y + sat_collider.half_size.y,
-			z = sat_pos.z + sat_collider.half_size.z,
-		}
+	-- Check if mouse is hovering over any satellite bounding box
+	hovered_target = nil
+	for _, enemy in ipairs(enemy_ships) do
+		if enemy.type == "satellite" and enemy.position and not enemy.is_destroyed then
+			local sat_pos = enemy.position
+			local sat_collider = enemy.config.collider
 
-		-- Project satellite box corners to screen and check if mouse is in the box
-		-- Simple check: if we can project the center and it's close to mouse, consider it hovered
-		local center_px, center_py = project_point(sat_pos.x, sat_pos.y, sat_pos.z, camera)
-		if center_px and center_py then
-			-- Simple radius check (rough approximation)
-			local dx = mx - center_px
-			local dy = my - center_py
-			local dist = sqrt(dx * dx + dy * dy)
-			if dist < 20 then  -- Hover radius in pixels
-				satellite_hovered = true
+			-- Project satellite center to screen and check if mouse is in the box
+			-- Simple check: if we can project the center and it's close to mouse, consider it hovered
+			local center_px, center_py = project_point(sat_pos.x, sat_pos.y, sat_pos.z, camera)
+			if center_px and center_py then
+				-- Simple radius check (rough approximation)
+				local dx = mx - center_px
+				local dy = my - center_py
+				local dist = sqrt(dx * dx + dy * dy)
+				if dist < 20 then  -- Hover radius in pixels
+					-- Set hovered target to this enemy ship
+					hovered_target = enemy
+					break  -- Only hover over the closest one
+				end
 			end
 		end
 	end
@@ -1285,8 +1316,8 @@ function _update()
 	-- Right-click to set ship heading or select satellite target
 	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
 		-- If satellite is hovered, select it as target instead of setting heading
-		if satellite_hovered and model_satellite then
-			selected_target = "satellite"
+		if hovered_target and hovered_target.type == "satellite" and model_satellite then
+			current_selected_target = hovered_target
 			camera_locked_to_target = true
 			camera_pitch_before_targeting = camera.rx  -- Save current pitch
 			printh("Satellite selected as target!")
@@ -1338,8 +1369,8 @@ function _update()
 
 		-- Fire beam to satellite or planet
 		local target_pos = nil
-		if model_satellite and satellite_pos then
-			target_pos = satellite_pos  -- Use current rendered position
+		if #enemy_ships > 0 and model_satellite then
+			target_pos = enemy_ships[1].position
 		elseif model_planet then
 			target_pos = Config.planet.position
 		end
@@ -1355,8 +1386,8 @@ function _update()
 	if keyp("z") then
 		printh("Z KEY PRESSED - SPAWNING DEBUG SMOKE!")
 		local target_pos = nil
-		if model_satellite and satellite_pos then
-			target_pos = satellite_pos  -- Use current rendered position
+		if #enemy_ships > 0 and model_satellite then
+			target_pos = enemy_ships[1].position
 		elseif model_planet then
 			target_pos = Config.planet.position
 		end
@@ -1380,7 +1411,7 @@ function _update()
 		-- Check fire button click
 		if mb & 1 == 1 then
 			if mx >= button_x and mx <= button_x + button_width and my >= button_y and my <= button_y + button_height then
-				if selected_target == "satellite" and model_satellite and satellite_pos then
+				if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
 					-- Check if we have enough weapons energy to fire (need 2 bars)
 					if energy_system.weapons >= 2 then
 						-- Fire photon beam at satellite
@@ -1388,9 +1419,9 @@ function _update()
 							x = Config.ship.position.x,
 							y = Config.ship.position.y,
 							z = Config.ship.position.z,
-							target_x = satellite_pos.x,
-							target_y = satellite_pos.y,
-							target_z = satellite_pos.z,
+							target_x = current_selected_target.position.x,
+							target_y = current_selected_target.position.y,
+							target_z = current_selected_target.position.z,
 							age = 0,
 							lifetime = Config.photon_beam.beam_lifetime
 						}
@@ -1437,10 +1468,10 @@ function _update()
 			local target_pos = nil
 			local target_ref = nil
 
-			if selected_target == "satellite" and model_satellite and satellite_pos then
-				target_pos = satellite_pos  -- Use current rendered position
-				target_ref = Config.satellite
-			elseif selected_target == "planet" and model_planet then
+			if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position then
+				target_pos = current_selected_target.position
+				target_ref = current_selected_target.config
+			elseif current_selected_target and current_selected_target.type == "planet" and model_planet then
 				target_pos = Config.planet.position
 				target_ref = Config.planet
 			end
@@ -1466,17 +1497,24 @@ function _update()
 	-- printh("SYNC: camera.ry = " .. flr(camera.ry*10000)/10000)
 
 	-- Smooth camera rotation (using direction vectors like the ship)
-	-- If satellite is targeted, aim camera at it instead of free rotation
-	if camera_locked_to_target then
+	-- If target is selected, aim camera at it instead of free rotation
+	if camera_locked_to_target and current_selected_target then
+		local target_pos = nil
 
+		-- Get position from current selected target object
+		if current_selected_target.type == "satellite" and current_selected_target.position then
+			target_pos = current_selected_target.position
+		elseif current_selected_target.type == "planet" then
+			target_pos = Config.planet.position
+		end
 
-		local sat_pos = satellite_pos
-
-		-- Calculate target direction from ship to satellite (normalized)
-		local dx = sat_pos.x - ship_pos.x
-		local dz = sat_pos.z - ship_pos.z
-		local direction = MathUtils.normalize(vec(dx, 0, dz))
-		camera_target_heading_dir = {x = direction.x, z = direction.z}
+		if target_pos then
+			-- Calculate target direction from ship to target (normalized)
+			local dx = target_pos.x - ship_pos.x
+			local dz = target_pos.z - ship_pos.z
+			local direction = MathUtils.normalize(vec(dx, 0, dz))
+			camera_target_heading_dir = {x = direction.x, z = direction.z}
+		end
 
 		-- Rotate camera heading toward target using dot product for alignment
 		-- and 90-degree rotated direction for left/right determination
@@ -1794,41 +1832,46 @@ function _update()
 	-- Update weapon effects (beams, explosions, smoke)
 	WeaponEffects.update(0.016)  -- 60fps delta time
 
-	-- Check if satellite has been destroyed (health reaches 0)
-	if not satellite_destroyed and Config.satellite.current_health <= 0 then
-		satellite_destroyed = true
-		printh("SATELLITE DESTROYED!")
+	-- Check if any enemy ship has been destroyed (health reaches 0)
+	for _, enemy in ipairs(enemy_ships) do
+		if not destroyed_enemies[enemy.id] and enemy.health <= 0 then
+			destroyed_enemies[enemy.id] = true
+			printh("ENEMY DESTROYED: " .. enemy.id)
 
-		-- Despawn the autonomous smoke emitter for the satellite
-		WeaponEffects.unregister_smoke_spawner(Config.satellite)
+			-- Despawn the autonomous smoke emitter for this enemy
+			WeaponEffects.unregister_smoke_spawner(enemy)
 
-		-- Spawn a large explosion at satellite position (like player ship destruction)
-		local sat_explosion = Explosion.new(
-			Config.satellite.position.x,
-			Config.satellite.position.y,
-			Config.satellite.position.z,
-			{
-				quad_count = 1,
-				sprite_id = 17,
-				lifetime = 0.5,        -- Longer visible duration
-				initial_scale = 1.0,
-				max_scale = 8.0,       -- Large explosion like player ship
-				speed_up_time = 0.15,
-				slowdown_time = 0.35,
-				slow_growth_factor = 0.15,
-			}
-		)
-		table.insert(active_explosions, sat_explosion)
+			-- Spawn a large explosion at enemy position (like player ship destruction)
+			local explosion = Explosion.new(
+				enemy.position.x,
+				enemy.position.y,
+				enemy.position.z,
+				{
+					quad_count = 1,
+					sprite_id = 17,
+					lifetime = 0.5,        -- Longer visible duration
+					initial_scale = 1.0,
+					max_scale = 8.0,       -- Large explosion like player ship
+					speed_up_time = 0.15,
+					slowdown_time = 0.35,
+					slow_growth_factor = 0.15,
+				}
+			)
+			table.insert(active_explosions, explosion)
 
-		-- Clear weapon targeting settings
-		selected_weapon = nil
-		selected_target = nil
+			-- If the destroyed enemy is the currently selected target, clear targeting
+			if current_selected_target and current_selected_target.id == enemy.id then
+				-- Clear weapon targeting settings
+				selected_weapon = nil
+				current_selected_target = nil
 
-		-- Clear camera targeting settings
-		camera_locked_to_target = false
-		if camera_pitch_before_targeting then
-			camera.rx = camera_pitch_before_targeting
-			camera_pitch_before_targeting = nil
+				-- Clear camera targeting settings
+				camera_locked_to_target = false
+				if camera_pitch_before_targeting then
+					camera.rx = camera_pitch_before_targeting
+					camera_pitch_before_targeting = nil
+				end
+			end
 		end
 	end
 
@@ -1935,27 +1978,28 @@ function _draw()
 		end
 	end
 
-	-- Render satellite (from state, initialized from config)
-	-- Skip rendering if satellite has been destroyed
-	if model_satellite and satellite_pos and not satellite_destroyed then
-		local sat_pos = satellite_pos
-		local sat_rot = Config.satellite.rotation
-		local satellite_faces = RendererLit.render_mesh(
-			model_satellite.verts, model_satellite.faces, camera,
-			sat_pos.x, sat_pos.y, sat_pos.z,
-			Config.satellite.sprite_id,  -- sprite override
-			light_dir,  -- light direction (directional light)
-			nil,  -- light radius (unused for directional)
-			light_brightness,  -- light brightness
-			ambient,  -- ambient light
-			false,  -- is_ground
-			sat_rot.pitch, sat_rot.yaw, sat_rot.roll,
-			Config.camera.render_distance
-		)
+	-- Render all satellites from enemy_ships array
+	for _, enemy in ipairs(enemy_ships) do
+		if enemy.type == "satellite" and model_satellite and enemy.position and not enemy.is_destroyed then
+			local sat_pos = enemy.position
+			local sat_rot = enemy.config.rotation
+			local satellite_faces = RendererLit.render_mesh(
+				model_satellite.verts, model_satellite.faces, camera,
+				sat_pos.x, sat_pos.y, sat_pos.z,
+				enemy.config.sprite_id,  -- sprite override
+				light_dir,  -- light direction (directional light)
+				nil,  -- light radius (unused for directional)
+				light_brightness,  -- light brightness
+				ambient,  -- ambient light
+				false,  -- is_ground
+				sat_rot.pitch, sat_rot.yaw, sat_rot.roll,
+				Config.camera.render_distance
+			)
 
-		-- Add satellite faces to all_faces
-		for i = 1, #satellite_faces do
-			add(all_faces, satellite_faces[i])
+			-- Add satellite faces to all_faces
+			for i = 1, #satellite_faces do
+				add(all_faces, satellite_faces[i])
+			end
 		end
 	end
 
@@ -2121,7 +2165,7 @@ function _draw()
 		local toggle_size = 10
 
 		-- Fire button background
-		local button_color = selected_target and 11 or 5  -- Bright color if target selected, darker otherwise
+		local button_color = current_selected_target and 11 or 5  -- Bright color if target selected, darker otherwise
 		rectfill(button_x, button_y, button_x + button_width, button_y + button_height, button_color)
 		rect(button_x, button_y, button_x + button_width, button_y + button_height, 7)
 		print("fire", button_x + 10, button_y + 3, 0)
@@ -2318,22 +2362,26 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
-	-- Draw satellite bounding box (skip if destroyed)
-	if model_satellite and satellite_pos and not satellite_destroyed then
-		local sat_collider = Config.satellite.collider
-		local sat_pos = satellite_pos
-		local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
-		local sat_box_min_y = sat_pos.y - sat_collider.half_size.y
-		local sat_box_min_z = sat_pos.z - sat_collider.half_size.z
-		local sat_box_max_x = sat_pos.x + sat_collider.half_size.x
-		local sat_box_max_y = sat_pos.y + sat_collider.half_size.y
-		local sat_box_max_z = sat_pos.z + sat_collider.half_size.z
+	-- Draw all satellite bounding boxes (skip if destroyed)
+	for _, enemy in ipairs(enemy_ships) do
+		if enemy.type == "satellite" and model_satellite and enemy.position and not enemy.is_destroyed then
+			local sat_collider = enemy.config.collider
+			local sat_pos = enemy.position
+			local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
+			local sat_box_min_y = sat_pos.y - sat_collider.half_size.y
+			local sat_box_min_z = sat_pos.z - sat_collider.half_size.z
+			local sat_box_max_x = sat_pos.x + sat_collider.half_size.x
+			local sat_box_max_y = sat_pos.y + sat_collider.half_size.y
+			local sat_box_max_z = sat_pos.z + sat_collider.half_size.z
 
-		-- Choose color based on state: yellow if targeted or hovered, blue by default
-		local sat_box_color = (selected_target == "satellite" or satellite_hovered) and Config.satellite.bounding_box_color_hover or Config.satellite.bounding_box_color_default
+			-- Choose color based on state: yellow if targeted or hovered, blue by default
+			local is_targeted = current_selected_target and current_selected_target == enemy
+			local is_hovered = hovered_target and hovered_target == enemy
+			local sat_box_color = (is_targeted or is_hovered) and enemy.config.bounding_box_color_hover or enemy.config.bounding_box_color_default
 
-		draw_box_wireframe(sat_box_min_x, sat_box_min_y, sat_box_min_z,
-		                   sat_box_max_x, sat_box_max_y, sat_box_max_z, camera, sat_box_color)
+			draw_box_wireframe(sat_box_min_x, sat_box_min_y, sat_box_min_z,
+			                   sat_box_max_x, sat_box_max_y, sat_box_max_z, camera, sat_box_color)
+		end
 	end
 
 	-- Draw physics debug wireframes if enabled
@@ -2411,9 +2459,9 @@ function _draw()
 
 	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
 	-- Hide health bar if satellite is destroyed
-	if selected_target == "satellite" and model_satellite and satellite_pos and not satellite_destroyed then
+	if current_selected_target and current_selected_target.type == "satellite" and model_satellite and current_selected_target.position and not current_selected_target.is_destroyed then
 		-- Project satellite position to screen to draw health bar above it
-		local sat_pos = satellite_pos
+		local sat_pos = current_selected_target.position
 		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)
 
 		if screen_x and screen_y then
@@ -2427,7 +2475,7 @@ function _draw()
 			rectfill(bar_x - 1, bar_y - 1, bar_x + bar_width + 1, bar_y + bar_height + 1, 0)  -- Dark border
 
 			-- Target health bar fill (green -> red based on health)
-			local target_health_percent = Config.satellite.current_health / Config.satellite.max_health
+			local target_health_percent = current_selected_target.config.current_health / current_selected_target.config.max_health
 			local target_fill_width = bar_width * target_health_percent
 			local target_health_color = target_health_percent > 0.5 and 11 or (target_health_percent > 0.25 and 10 or 8)
 			if target_fill_width > 0 then
@@ -2438,7 +2486,7 @@ function _draw()
 			rect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, 11)
 
 			-- Target name below health bar
-			local target_name = "satellite"
+			local target_name = current_selected_target.id
 			local name_x = bar_x + (bar_width / 2) - (#target_name * 2)
 			local name_y = bar_y + bar_height + 2
 			print(target_name, name_x, name_y, 11)  -- Bright color for name
@@ -2449,13 +2497,16 @@ function _draw()
 	if game_state == "playing" then
 		-- Check if satellite is in sensor range
 		local sat_in_range = false
-		if model_satellite and satellite_pos then
-			local dx = satellite_pos.x - Config.ship.position.x
-			local dz = satellite_pos.z - Config.ship.position.z
+		local first_sat_pos = nil
+		if #enemy_ships > 0 and model_satellite then
+			local first_sat = enemy_ships[1]
+			first_sat_pos = first_sat.position
+			local dx = first_sat_pos.x - Config.ship.position.x
+			local dz = first_sat_pos.z - Config.ship.position.z
 			local dist_to_sat = sqrt(dx * dx + dz * dz)
-			sat_in_range = dist_to_sat <= Config.satellite.sensor_range
+			sat_in_range = dist_to_sat <= first_sat.config.sensor_range
 		end
-		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius, satellite_pos, sat_in_range)
+		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius, first_sat_pos, sat_in_range)
 	end
 
 	-- Death screen (with 2 second delay before showing)
