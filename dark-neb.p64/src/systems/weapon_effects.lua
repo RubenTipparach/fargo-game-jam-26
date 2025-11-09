@@ -37,11 +37,11 @@ local SMOKE_CONFIG = {
 	lifetime = 4.0,  -- Longer smoke duration for more persistent effect
 	growth_time = 0.2,  -- Time to reach max size (slower growth)
 	initial_scale = 0.5,
-	max_scale = 1.0,
+	max_scale = 2.0,
 	spawn_interval = 1,  -- Time between smoke spawns when object is damaged (seconds)
 	-- Velocity configuration for spawned smoke
 	velocity_x_spread = 0.4,      -- Horizontal X velocity spread (±0.2)
-	velocity_y_base = 0.8,        -- Base upward velocity
+	velocity_y_base = 1.4,        -- Base upward velocity
 	velocity_y_spread = 0.3,      -- Variation in upward velocity (0.8 to 1.1)
 	velocity_z_spread = 0.4,      -- Horizontal Z velocity spread (±0.2)
 }

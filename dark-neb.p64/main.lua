@@ -98,6 +98,7 @@ local raycast_z = nil
 -- Game state
 local current_health = Config.health.max_health
 local is_dead = false
+local satellite_destroyed = false  -- Track if satellite has been destroyed
 local death_time = 0
 local game_state = "menu"  -- "menu", "playing", "out_of_bounds", "game_over"
 local out_of_bounds_time = 0  -- Time spent out of bounds
@@ -1742,6 +1743,18 @@ function _update()
 	-- Update weapon effects (beams, explosions, smoke)
 	WeaponEffects.update(0.016)  -- 60fps delta time
 
+	-- Check if satellite has been destroyed (health reaches 0)
+	if not satellite_destroyed and Config.satellite.current_health <= 0 then
+		satellite_destroyed = true
+		printh("SATELLITE DESTROYED!")
+
+		-- Spawn a large explosion at satellite position
+		WeaponEffects.spawn_explosion(
+			{x = Config.satellite.position.x, y = Config.satellite.position.y, z = Config.satellite.position.z},
+			nil  -- No target for this explosion (it's the death explosion)
+		)
+	end
+
 	-- Update mouse button state for next frame's click detection
 	last_mouse_button_state = (mb & 1) == 1
 end
@@ -1847,7 +1860,8 @@ function _draw()
 	end
 
 	-- Render satellite (from state, initialized from config)
-	if model_satellite and satellite_pos then
+	-- Skip rendering if satellite has been destroyed
+	if model_satellite and satellite_pos and not satellite_destroyed then
 		local sat_pos = satellite_pos
 		local sat_rot = Config.satellite.rotation
 		local satellite_faces = RendererLit.render_mesh(
@@ -2236,8 +2250,8 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
-	-- Draw satellite bounding box (always shown, blue by default, yellow when hovered or targeted)
-	if model_satellite and satellite_pos then
+	-- Draw satellite bounding box (skip if destroyed)
+	if model_satellite and satellite_pos and not satellite_destroyed then
 		local sat_collider = Config.satellite.collider
 		local sat_pos = satellite_pos
 		local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
@@ -2329,7 +2343,8 @@ function _draw()
 	draw_energy_bars()
 
 	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
-	if selected_target == "satellite" and model_satellite and satellite_pos then
+	-- Hide health bar if satellite is destroyed
+	if selected_target == "satellite" and model_satellite and satellite_pos and not satellite_destroyed then
 		-- Project satellite position to screen to draw health bar above it
 		local sat_pos = satellite_pos
 		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)
