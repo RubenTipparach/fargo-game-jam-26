@@ -30,6 +30,7 @@ UIRenderer = include("src/ui/ui_renderer.lua")
 Panel = include("src/ui/panel.lua")
 Button = include("src/ui/button.lua")
 ArcUI = include("src/ui/arc_ui.lua")
+WeaponsUI = include("src/ui/weapons_ui.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -115,8 +116,23 @@ local energy_system = {
 	sensors = Config.energy.systems.sensors.allocated,
 }
 
--- Photon beam charging state
-local photon_charge = 0  -- Current charge level (0-1)
+-- Weapon selection and charging state
+local selected_weapon = nil  -- Currently selected weapon (1 or 2)
+local weapon_states = {}  -- Charging and auto-fire state for each weapon
+
+-- Initialize weapon states
+function init_weapon_states()
+	weapon_states = {}
+	for i = 1, #Config.weapons do
+		weapon_states[i] = {
+			charge = 0,  -- Charging progress (0 to 1)
+			auto_fire = false,  -- Auto-fire toggle
+			hovering = false,  -- Hovering over weapon button
+		}
+	end
+end
+
+init_weapon_states()
 
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
@@ -1035,7 +1051,9 @@ end
 
 function _update()
 	-- Mouse input (used for menu and gameplay)
-	local mx, my, mb = mouse()
+	mx, my, mb = mouse()
+
+
 
 	-- Handle menu input
 	if game_state == "menu" then
@@ -1062,8 +1080,8 @@ function _update()
 	local over_slider = mx >= slider_x - 5 and mx <= slider_x + slider_width + 5 and
 	                    my >= slider_y and my <= slider_y + slider_height
 
-	-- Check if mouse is over energy UI area
-	local over_energy_ui = mx < 200 and my < 300
+	-- Check if mouse is over energy UI area (but not weapons UI)
+	local over_energy_ui = mx < 200 and my < 100
 
 	-- Check if button is newly pressed this frame (was not pressed last frame, is pressed now)
 	local button_pressed = (mb & 1 == 1) and not last_mouse_button_state
@@ -1080,6 +1098,20 @@ function _update()
 			-- Handle energy block clicks ONLY on initial press, not while held
 			build_energy_hitboxes()
 			handle_energy_clicks(mx, my)
+		elseif button_pressed then
+			-- Check for weapon selection clicks on main button
+			local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
+			if weapon_id then
+				selected_weapon = weapon_id
+				printh("Weapon " .. weapon_id .. " selected")
+			else
+				-- Check for auto-fire toggle clicks
+				local toggle_id = WeaponsUI.get_toggle_at_point(mx, my, Config)
+				if toggle_id then
+					weapon_states[toggle_id].auto_fire = not weapon_states[toggle_id].auto_fire
+					printh("Weapon " .. toggle_id .. " auto-fire toggled: " .. (weapon_states[toggle_id].auto_fire and "ON" or "OFF"))
+				end
+			end
 		elseif not slider_dragging then
 			-- If camera is locked to target, left-click unsnaps it
 			if camera_locked_to_target then
@@ -1252,6 +1284,24 @@ function _update()
 				Config.photon_beam.auto_fire = not Config.photon_beam.auto_fire
 				printh("Auto fire toggled: " .. (Config.photon_beam.auto_fire and "ON" or "OFF"))
 			end
+		end
+	end
+
+	-- Update weapon charging (weapons auto-charge continuously if energy available)
+	for i = 1, #Config.weapons do
+		local weapon = Config.weapons[i]
+		local state = weapon_states[i]
+		local has_energy = energy_system.weapons >= weapon.energy_cost
+
+		-- Charge the weapon if energy is available
+		if has_energy then
+			state.charge = state.charge + 1/60 / weapon.charge_time  -- 60fps framerate
+			if state.charge > 1.0 then
+				state.charge = 1.0
+			end
+		else
+			-- Stop charging if no energy
+			state.charge = 0
 		end
 	end
 
@@ -1882,6 +1932,22 @@ function _draw()
 		print("auto", toggle_x + 15, toggle_y + 1, 7)
 	end
 
+	-- Draw weapons UI
+	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my)
+
+	-- Debug weapons UI hitboxes
+	if (Config.debug) then
+		local weapon_hitboxes = WeaponsUI.get_weapon_hitboxes(Config)
+		for _, hb in ipairs(weapon_hitboxes) do
+			rect(hb.x, hb.y, hb.x + hb.width, hb.y + hb.height, 3)  -- Cyan outline
+		end
+		local toggle_hitboxes = WeaponsUI.get_toggle_hitboxes(Config)
+		for _, hb in ipairs(toggle_hitboxes) do
+			rect(hb.x, hb.y, hb.x + hb.size, hb.y + hb.size, 3)  -- Cyan outline
+		end
+		print("mx: " .. mx .. " my: " .. my, 320 - 50, 10, 7)
+	end
+
 	-- CPU usage (drawn via UIRenderer)
 	UIRenderer.draw_cpu_stats()
 
@@ -2119,12 +2185,18 @@ function _draw()
 	-- Health bar border (white)
 	rect(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 7)
 
+	-- Health text (inside the box with drop shadow)
+	local health_display = flr(current_health)
+	local health_text = "HP: " .. health_display
+	local text_x = health_bar_x + 3
+	local text_y = health_bar_y + 2
+	-- Draw text shadow
+	print(health_text, text_x + 1, text_y + 1, 1)
+	-- Draw text
+	print(health_text, text_x, text_y, 7)
+
 	-- Draw energy bars
 	draw_energy_bars()
-
-	-- Health text
-	local health_display = flr(current_health)
-	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
 
 	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
 	if selected_target == "satellite" and model_satellite and satellite_pos then

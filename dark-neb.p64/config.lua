@@ -207,6 +207,20 @@ Config.explosion = {
 	dither_enabled = true,  -- Apply dithering for growing/fading effect
 }
 
+-- Weapons configuration
+Config.weapons = {
+	{
+		name = "Photon Beam A",
+		energy_cost = 2,  -- Minimum energy required to fire
+		charge_time = 3,  -- Time in seconds to charge
+	},
+	{
+		name = "Photon Beam B",
+		energy_cost = 4,  -- Minimum energy required to fire
+		charge_time = 3,  -- Time in seconds to charge
+	},
+}
+
 -- Energy system configuration
 Config.energy = {
 	max_total = 8,  -- Total energy available
@@ -218,8 +232,8 @@ Config.energy = {
 	systems = {
 		weapons = {
 			capacity = 4,
-			allocated = 2,
-			color_full = 9,  -- orange
+			allocated = 4,  -- Auto-allocate all 4 bars to weapons for simplicity
+			color_full = 24,  -- maroon
 			color_empty = 0,  -- Black/dark
 		},
 		impulse = {
@@ -254,5 +268,27 @@ Config.energy = {
 	system_spacing = 15,  -- Vertical space between each system's energy bar
 	system_bar_x_offset = 20,  -- Horizontal offset for system energy bars from total energy bar
 }
+
+-- Mission configurations
+Config.missions = {
+	-- Mission 1: Tutorial/Starting mission
+	mission_1 = {
+		name = "Mission 1: Escort",
+		description = "Protect the satellite",
+		ship_start = {x = 0, y = 0, z = 0},
+		satellite_start = {x = -30, y = 0, z = -40},
+		planet_start = {x = 50, y = 0, z = 0},
+		objectives = {
+			{
+				type = "protect",
+				target = "satellite",
+				min_health_percent = 50,  -- Keep satellite above 50% health
+			},
+		},
+	},
+}
+
+-- Set current mission (default to mission 1)
+Config.current_mission = Config.missions.mission_1
 
 return Config
