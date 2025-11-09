@@ -15,7 +15,9 @@ Minimap.SCALE = Minimap.SIZE / Minimap.MAP_SIZE  -- Pixels per world unit
 -- @param ship_pos: {x, z} player ship position
 -- @param planet_pos: {x, z} planet position
 -- @param planet_radius: radius of the planet in world units
-function Minimap.draw(ship_pos, planet_pos, planet_radius)
+-- @param satellite_pos: {x, z} satellite position (optional)
+-- @param satellite_in_range: boolean indicating if satellite is in sensor range (optional)
+function Minimap.draw(ship_pos, planet_pos, planet_radius, satellite_pos, satellite_in_range)
 	-- Draw minimap background with border
 	rectfill(Minimap.X - 2, Minimap.Y - 2, Minimap.X + Minimap.SIZE + 1, Minimap.Y + Minimap.SIZE + 1, 0)  -- Black border
 	rectfill(Minimap.X, Minimap.Y, Minimap.X + Minimap.SIZE, Minimap.Y + Minimap.SIZE, 1)  -- Dark blue background
@@ -38,6 +40,13 @@ function Minimap.draw(ship_pos, planet_pos, planet_radius)
 		local planet_radius_pixels = planet_radius * Minimap.SCALE
 		circfill(planet_x, planet_y, planet_radius_pixels, 8)  -- Red planet
 		circ(planet_x, planet_y, planet_radius_pixels, 15)  -- Bright border
+	end
+
+	-- Draw satellite if in sensor range
+	if satellite_pos and satellite_in_range then
+		local sat_x, sat_y = world_to_minimap(satellite_pos.x, satellite_pos.z)
+		circfill(sat_x, sat_y, 2, 13)  -- Cyan satellite
+		circ(sat_x, sat_y, 2, 11)  -- Bright border
 	end
 
 	-- Draw ship as a yellow diamond (blinking to avoid overlap with enemy indicators)

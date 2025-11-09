@@ -125,9 +125,9 @@ end
 -- @param ship_pos: Ship position table {x, y, z}
 -- @param planet_pos: Planet position table {x, y, z}
 -- @param planet_radius: Planet radius in world units
-function UIRenderer.draw_minimap(ship_pos, planet_pos, planet_radius)
+function UIRenderer.draw_minimap(ship_pos, planet_pos, planet_radius, satellite_pos, satellite_in_range)
 	if Minimap then
-		Minimap.draw(ship_pos, planet_pos, planet_radius)
+		Minimap.draw(ship_pos, planet_pos, planet_radius, satellite_pos, satellite_in_range)
 	end
 end
 
@@ -150,12 +150,22 @@ end
 -- Draw out of bounds warning
 -- @param remaining_time: Time remaining before game over in seconds
 function UIRenderer.draw_out_of_bounds(remaining_time)
-	if ui_state.out_of_bounds_panel then
-		ui_state.out_of_bounds_panel:show()
-		ui_state.out_of_bounds_panel:draw()
-		print("Time remaining: " .. flr(remaining_time) .. "s", 165, 90, 11)
-		ui_state.back_to_menu_button:draw()
-	end
+	-- Draw "leaving battlefield" warning with drop shadow (no panel or button)
+	local msg = "leaving battlefield"
+	local time_msg = flr(remaining_time) .. "s"
+
+	-- Message position (top-center with slight offset)
+	local msg_x = 240 - (#msg * 2) + 5  -- Approximate center
+	local msg_y = 30
+	local time_y = msg_y + 12  -- Below the message
+
+	-- Draw drop shadow for message (dark gray, offset by 1 pixel)
+	print(msg, msg_x + 1, msg_y + 1, 1)
+	print(msg, msg_x, msg_y, 8)  -- Red text
+
+	-- Draw drop shadow for countdown (dark gray, offset by 1 pixel)
+	print(time_msg, msg_x + 1, time_y + 1, 1)
+	print(time_msg, msg_x, time_y, 11)  -- Bright cyan text
 end
 
 -- Get panel references (for direct manipulation if needed)

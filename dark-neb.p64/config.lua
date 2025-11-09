@@ -125,6 +125,47 @@ Config.crosshair = {
 	max_distance = 4,  -- Only show crosshair if within this distance from ship on XZ plane
 }
 
+-- Speed slider configuration
+Config.slider = {
+	x = 450,  -- Right side of screen
+	y = 100,   -- Top position
+	height = 150,  -- Length of the slider track
+	width = 10,  -- Width of the slider track
+	handle_height = 20,  -- Height of the draggable handle
+	text_x_offset = -30,  -- X offset for speed text from slider
+	text_y_offset = 7,  -- Y offset for speed text from slider bottom
+	text_color = 7,  -- Text color (white)
+	text_prefix = "speed: ",  -- Text label prefix
+}
+
+-- Satellite configuration
+Config.satellite = {
+	position = {x = -30, y = 0, z = -40},
+	rotation = {pitch = 0, yaw = 0, roll = 0},
+	model_file = "models/satelite.obj",
+	sprite_id = 2,  -- Texture sprite
+	max_health = 100,  -- Health of satellite
+	current_health = 100,  -- Current health
+	sensor_range = 200,  -- Range for sensor detection (no fog of war for tutorial)
+	-- Box collider for targeting
+	collider = {
+		type = "box",
+		half_size = {x = 2, y = 2, z = 2},
+	},
+	bounding_box_color_default = 13,  -- Blue (cyan)
+	bounding_box_color_hover = 10,  -- Yellow
+}
+
+-- Photon beam configuration
+Config.photon_beam = {
+	enabled = true,
+	auto_fire = false,  -- Toggle for automatic firing
+	fire_rate = 0.1,  -- Seconds between shots when auto firing
+	beam_speed = 50,  -- World units per second
+	beam_lifetime = 5.0,  -- Seconds before beam disappears
+	beam_color = 11,  -- Bright cyan
+}
+
 -- Health and gameplay configuration
 Config.health = {
 	max_health = 100,
@@ -139,7 +180,7 @@ Config.health = {
 -- Battlefield configuration
 Config.battlefield = {
 	map_size = 512,  -- Map is 512x512 units
-	out_of_bounds_warning_time = 15.0,  -- Seconds before game ends after leaving
+	out_of_bounds_warning_time = 30.0,  -- Seconds before game ends after leaving (30 seconds)
 }
 
 -- Explosion particle configuration

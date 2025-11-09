@@ -61,11 +61,11 @@ local target_ship_speed = Config.ship.speed
 
 -- Speed slider state
 local slider_dragging = false
-local slider_x = 450  -- Right side of screen
-local slider_y = 50   -- Top position
-local slider_height = 150
-local slider_width = 10
-local slider_handle_height = 20
+local slider_x = Config.slider.x
+local slider_y = Config.slider.y
+local slider_height = Config.slider.height
+local slider_width = Config.slider.width
+local slider_handle_height = Config.slider.handle_height
 
 -- Light settings (from config)
 local light_yaw = Config.lighting.yaw
@@ -576,10 +576,19 @@ end
 local model_shippy = nil
 local model_sphere = nil
 local model_planet = nil
+local model_satellite = nil
 local planet_rotation = 0
 
 -- Particle trails (speedlines) - simple array of line segments
 local particle_trails = {}  -- Array of {x1, z1, x2, z2, age, lifetime}
+
+-- Targeting and weapons
+local satellite_hovered = false  -- Whether mouse is hovering over satellite
+local selected_target = nil  -- Currently selected target ("satellite" or nil)
+local photon_beams = {}  -- Array of active photon beams
+local auto_fire_timer = 0  -- Timer for auto-fire
+local camera_locked_to_target = false  -- Whether camera is locked to target or free rotating
+local camera_pitch_before_targeting = nil  -- Store pitch value before targeting for restoration
 
 
 
@@ -835,6 +844,15 @@ function _init()
 	else
 		printh("WARNING: Failed to load " .. Config.ship.model_file)
 	end
+
+	-- Try to load the satellite model (from config)
+	model_satellite = load_obj(Config.satellite.model_file)
+
+	if model_satellite then
+		printh("Satellite loaded: " .. #model_satellite.verts .. " vertices, " .. #model_satellite.faces .. " faces")
+	else
+		printh("WARNING: Failed to load " .. Config.satellite.model_file)
+	end
 end
 
 function _update()
@@ -874,26 +892,35 @@ function _update()
 			local slider_pos = mid(0, (my - slider_y) / slider_height, 1)
 			target_ship_speed = (1 - slider_pos)  -- Inverted (top = max speed)
 		elseif not slider_dragging then
-			-- Camera orbit
-			if not mouse_drag then
-				-- Start dragging
-				mouse_drag = true
-				last_mouse_x = mx
-				last_mouse_y = my
-			else
-				-- Continue dragging
-				local dx = mx - last_mouse_x
-				local dy = my - last_mouse_y
+			-- If camera is locked to target, left-click unsnaps it
+			if camera_locked_to_target then
+				camera_locked_to_target = false
+				printh("Camera unsnapped from target!")
+			end
+			-- Camera orbit (free rotate when not locked)
+			if not camera_locked_to_target then
+				if not mouse_drag then
+					-- Start dragging
+					mouse_drag = true
+					last_mouse_x = mx
+					last_mouse_y = my
+				else
+					-- Continue dragging
+					local dx = mx - last_mouse_x
+					local dy = my - last_mouse_y
 
-				-- Update target camera rotation (Y axis up)
-				target_ry = target_ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
-				target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
+					-- Update target camera rotation (Y axis up)
+					-- Invert yaw direction (negate dx)
+					target_ry = target_ry - dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y) - inverted
+					-- Enable pitch rotation with mouse Y movement
+					target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
 
-				-- Clamp target pitch to avoid gimbal lock
-				target_rx = mid(-1.5, target_rx, 1.5)
+					-- Clamp target pitch to avoid gimbal lock
+					target_rx = mid(-1.5, target_rx, 1.5)
 
-				last_mouse_x = mx
-				last_mouse_y = my
+					last_mouse_x = mx
+					last_mouse_y = my
+				end
 			end
 		end
 	else
@@ -904,21 +931,47 @@ function _update()
 	-- Always update raycast position for crosshair visualization
 	raycast_x, raycast_z = raycast_to_ground_plane(mx, my, camera)
 
-	-- Right-click to set ship heading
-	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
-		-- Log camera state
-		printh("Camera: pos(" .. flr(camera.x*10)/10 .. "," .. flr(camera.y*10)/10 .. "," .. flr(camera.z*10)/10 .. ") rot(" .. flr(camera.rx*100)/100 .. "," .. flr(camera.ry*100)/100 .. ")")
-		printh("Mouse: (" .. mx .. "," .. my .. ")")
+	-- Check if mouse is hovering over satellite bounding box
+	satellite_hovered = false
+	if model_satellite then
+		local sat_pos = Config.satellite.position
+		local sat_collider = Config.satellite.collider
+		local sat_box_min = {
+			x = sat_pos.x - sat_collider.half_size.x,
+			y = sat_pos.y - sat_collider.half_size.y,
+			z = sat_pos.z - sat_collider.half_size.z,
+		}
+		local sat_box_max = {
+			x = sat_pos.x + sat_collider.half_size.x,
+			y = sat_pos.y + sat_collider.half_size.y,
+			z = sat_pos.z + sat_collider.half_size.z,
+		}
 
-		if raycast_x and raycast_z then
-			printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
-
-			-- Verify raycast by projecting back to screen
-			local verify_px, verify_py = project_point(raycast_x, 0, raycast_z, camera)
-			if verify_px then
-				printh("  Verification: projects back to screen (" .. flr(verify_px) .. "," .. flr(verify_py) .. ")")
-				printh("  Error: dx=" .. flr(verify_px - mx) .. " dy=" .. flr(verify_py - my))
+		-- Project satellite box corners to screen and check if mouse is in the box
+		-- Simple check: if we can project the center and it's close to mouse, consider it hovered
+		local center_px, center_py = project_point(sat_pos.x, sat_pos.y, sat_pos.z, camera)
+		if center_px and center_py then
+			-- Simple radius check (rough approximation)
+			local dx = mx - center_px
+			local dy = my - center_py
+			local dist = sqrt(dx * dx + dy * dy)
+			if dist < 20 then  -- Hover radius in pixels
+				satellite_hovered = true
 			end
+		end
+	end
+
+	-- Right-click to set ship heading or select satellite target
+	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
+		-- If satellite is hovered, select it as target instead of setting heading
+		if satellite_hovered and model_satellite then
+			selected_target = "satellite"
+			camera_locked_to_target = true
+			camera_pitch_before_targeting = camera.rx  -- Save current pitch
+			printh("Satellite selected as target!")
+		elseif raycast_x and raycast_z then
+			-- Only set ship heading if we have a valid crosshair (raycast succeeded)
+			printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
 
 			-- Calculate direction from ship to target point (normalized)
 			local ship_x = Config.ship.position.x
@@ -936,23 +989,7 @@ function _update()
 				-- Log heading directions and positions for debugging
 				printh("  Ship heading dir: (" .. flr(ship_heading_dir.x*1000)/1000 .. "," .. flr(ship_heading_dir.z*1000)/1000 .. ")")
 				printh("  Target heading dir: (" .. flr(target_heading_dir.x*1000)/1000 .. "," .. flr(target_heading_dir.z*1000)/1000 .. ")")
-
-				-- Calculate and log the current heading position (blue line)
-				local current_heading_x = ship_x + ship_heading_dir.x * Config.ship.heading_arc_radius
-				local current_heading_z = ship_z + ship_heading_dir.z * Config.ship.heading_arc_radius
-				printh("  Current heading pos (blue): (" .. flr(current_heading_x*10)/10 .. "," .. flr(current_heading_z*10)/10 .. ")")
-
-				-- Calculate and log the planned heading position (yellow line)
-				local planned_x = ship_x + target_heading_dir.x * Config.ship.heading_arc_radius
-				local planned_z = ship_z + target_heading_dir.z * Config.ship.heading_arc_radius
-				printh("  Planned heading pos (yellow): (" .. flr(planned_x*10)/10 .. "," .. flr(planned_z*10)/10 .. ")")
-
-				-- Calculate dot product to show how different they are
-				local dot = ship_heading_dir.x * target_heading_dir.x + ship_heading_dir.z * target_heading_dir.z
-				printh("  Heading dot product: " .. flr(dot * 1000) / 1000)
 			end
-		else
-			printh("Raycast FAILED: returned nil")
 		end
 	end
 
@@ -986,7 +1023,61 @@ function _update()
 		table.insert(active_explosions, explosion)
 	end
 
+	-- Handle photon beam button clicks (only during gameplay)
+	if game_state == "playing" and Config.photon_beam.enabled then
+		local button_x = 390  -- slider_x - 60
+		local button_y = slider_y + slider_height + 60
+		local button_width = 50
+		local button_height = 15
+		local toggle_x = button_x
+		local toggle_y = button_y + 20
+		local toggle_size = 10
+
+		-- Check fire button click
+		if mb & 1 == 1 then
+			if mx >= button_x and mx <= button_x + button_width and my >= button_y and my <= button_y + button_height then
+				if selected_target == "satellite" and model_satellite then
+					-- Fire photon beam at satellite
+					local beam = {
+						x = Config.ship.position.x,
+						y = Config.ship.position.y,
+						z = Config.ship.position.z,
+						target_x = Config.satellite.position.x,
+						target_y = Config.satellite.position.y,
+						target_z = Config.satellite.position.z,
+						age = 0,
+						lifetime = Config.photon_beam.beam_lifetime
+					}
+					table.insert(photon_beams, beam)
+					printh("Photon beam fired at satellite!")
+				end
+			end
+			-- Check auto toggle click
+			if mx >= toggle_x and mx <= toggle_x + toggle_size and my >= toggle_y and my <= toggle_y + toggle_size then
+				Config.photon_beam.auto_fire = not Config.photon_beam.auto_fire
+				printh("Auto fire toggled: " .. (Config.photon_beam.auto_fire and "ON" or "OFF"))
+			end
+		end
+	end
+
 	-- Smooth camera rotation (lerp towards target)
+	-- If satellite is targeted, aim camera at it instead of free rotation
+	if camera_locked_to_target and selected_target == "satellite" and model_satellite then
+		local sat_pos = Config.satellite.position
+		local ship_pos = Config.ship.position
+
+		-- Calculate direction from ship to satellite
+		local dx = sat_pos.x - ship_pos.x
+		local dz = sat_pos.z - ship_pos.z
+
+		-- Calculate yaw (direction to satellite in XZ plane) - point camera at target
+		local sat_yaw = atan2(dx, dz)
+
+		-- Only update yaw to face satellite, preserve pitch from before targeting
+		target_ry = sat_yaw
+		target_rx = camera_pitch_before_targeting or 0  -- Use saved pitch, or 0 if not set
+	end
+
 	local smoothing = 0.2  -- Lower = smoother (0.1-0.3 range)
 	camera.rx = camera.rx + (target_rx - camera.rx) * smoothing
 	camera.ry = camera.ry + (target_ry - camera.ry) * smoothing
@@ -1332,6 +1423,29 @@ function _draw()
 		end
 	end
 
+	-- Render satellite (from config)
+	if model_satellite then
+		local sat_pos = Config.satellite.position
+		local sat_rot = Config.satellite.rotation
+		local satellite_faces = RendererLit.render_mesh(
+			model_satellite.verts, model_satellite.faces, camera,
+			sat_pos.x, sat_pos.y, sat_pos.z,
+			Config.satellite.sprite_id,  -- sprite override
+			light_dir,  -- light direction (directional light)
+			nil,  -- light radius (unused for directional)
+			light_brightness,  -- light brightness
+			ambient,  -- ambient light
+			false,  -- is_ground
+			sat_rot.pitch, sat_rot.yaw, sat_rot.roll,
+			Config.camera.render_distance
+		)
+
+		-- Add satellite faces to all_faces
+		for i = 1, #satellite_faces do
+			add(all_faces, satellite_faces[i])
+		end
+	end
+
 	-- Render all spawned objects (spheres or quads)
 	for _, obj in ipairs(spawned_spheres) do
 		-- Use custom mesh if provided (for quads), otherwise use model_sphere
@@ -1484,7 +1598,35 @@ function _draw()
 
 	-- Speed value text
 	local speed_display = flr(ship_speed * Config.ship.max_speed * 10) / 10
-	print("speed: " .. speed_display, slider_x - 30, slider_y + slider_height + 30, 7)
+	local text_x = slider_x + Config.slider.text_x_offset
+	local text_y = slider_y + slider_height + Config.slider.text_y_offset
+	print(Config.slider.text_prefix .. speed_display, text_x, text_y, Config.slider.text_color)
+
+	-- Draw photon beam button and auto toggle
+	if Config.photon_beam.enabled then
+		local button_x = 390  -- slider_x - 60
+		local button_y = slider_y + slider_height + 60
+		local button_width = 50
+		local button_height = 15
+		local toggle_x = button_x
+		local toggle_y = button_y + 20
+		local toggle_size = 10
+
+		-- Fire button background
+		local button_color = selected_target and 11 or 5  -- Bright color if target selected, darker otherwise
+		rectfill(button_x, button_y, button_x + button_width, button_y + button_height, button_color)
+		rect(button_x, button_y, button_x + button_width, button_y + button_height, 7)
+		print("fire", button_x + 10, button_y + 3, 0)
+
+		-- Auto toggle checkbox
+		local toggle_color = Config.photon_beam.auto_fire and 11 or 1
+		rectfill(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, toggle_color)
+		rect(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, 7)
+		if Config.photon_beam.auto_fire then
+			print("✓", toggle_x + 2, toggle_y, 0)
+		end
+		print("auto", toggle_x + 15, toggle_y + 1, 7)
+	end
 
 	-- CPU usage (drawn via UIRenderer)
 	UIRenderer.draw_cpu_stats()
@@ -1644,6 +1786,24 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
+	-- Draw satellite bounding box (always shown, blue by default, yellow when hovered or targeted)
+	if model_satellite then
+		local sat_collider = Config.satellite.collider
+		local sat_pos = Config.satellite.position
+		local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
+		local sat_box_min_y = sat_pos.y - sat_collider.half_size.y
+		local sat_box_min_z = sat_pos.z - sat_collider.half_size.z
+		local sat_box_max_x = sat_pos.x + sat_collider.half_size.x
+		local sat_box_max_y = sat_pos.y + sat_collider.half_size.y
+		local sat_box_max_z = sat_pos.z + sat_collider.half_size.z
+
+		-- Choose color based on state: yellow if targeted or hovered, blue by default
+		local sat_box_color = (selected_target == "satellite" or satellite_hovered) and Config.satellite.bounding_box_color_hover or Config.satellite.bounding_box_color_default
+
+		draw_box_wireframe(sat_box_min_x, sat_box_min_y, sat_box_min_z,
+		                   sat_box_max_x, sat_box_max_y, sat_box_max_z, camera, sat_box_color)
+	end
+
 	-- Draw physics debug wireframes if enabled
 	if Config.debug_physics then
 		-- Draw ship collider wireframe
@@ -1709,9 +1869,52 @@ function _draw()
 	local health_display = flr(current_health)
 	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
 
+	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
+	if selected_target == "satellite" and model_satellite then
+		-- Project satellite position to screen to draw health bar above it
+		local sat_pos = Config.satellite.position
+		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)
+
+		if screen_x and screen_y then
+			-- Draw health bar above the target
+			local bar_width = 60
+			local bar_height = 8
+			local bar_x = screen_x - (bar_width / 2)  -- Center bar on target
+			local bar_y = screen_y - 15  -- Offset above target
+
+			-- Target health bar background (black with border)
+			rectfill(bar_x - 1, bar_y - 1, bar_x + bar_width + 1, bar_y + bar_height + 1, 0)  -- Dark border
+
+			-- Target health bar fill (green -> red based on health)
+			local target_health_percent = Config.satellite.current_health / Config.satellite.max_health
+			local target_fill_width = bar_width * target_health_percent
+			local target_health_color = target_health_percent > 0.5 and 11 or (target_health_percent > 0.25 and 10 or 8)
+			if target_fill_width > 0 then
+				rectfill(bar_x, bar_y, bar_x + target_fill_width, bar_y + bar_height, target_health_color)
+			end
+
+			-- Target health bar border (bright)
+			rect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, 11)
+
+			-- Target name below health bar
+			local target_name = "satellite"
+			local name_x = bar_x + (bar_width / 2) - (#target_name * 2)
+			local name_y = bar_y + bar_height + 2
+			print(target_name, name_x, name_y, 11)  -- Bright color for name
+		end
+	end
+
 	-- Draw minimap during gameplay (via UIRenderer)
 	if game_state == "playing" then
-		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius)
+		-- Check if satellite is in sensor range
+		local sat_in_range = false
+		if model_satellite then
+			local dx = Config.satellite.position.x - Config.ship.position.x
+			local dz = Config.satellite.position.z - Config.ship.position.z
+			local dist_to_sat = sqrt(dx * dx + dz * dz)
+			sat_in_range = dist_to_sat <= Config.satellite.sensor_range
+		end
+		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius, Config.satellite.position, sat_in_range)
 	end
 
 	-- Death screen (with 2 second delay before showing)
