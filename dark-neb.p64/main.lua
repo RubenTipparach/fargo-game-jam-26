@@ -590,6 +590,9 @@ local auto_fire_timer = 0  -- Timer for auto-fire
 local camera_locked_to_target = false  -- Whether camera is locked to target or free rotating
 local camera_pitch_before_targeting = nil  -- Store pitch value before targeting for restoration
 
+-- Satellite state (separate from config - allows for dynamic position updates)
+local satellite_pos = nil  -- Current satellite position (initialized in _init)
+
 
 
 -- Create a UV-mapped sphere (from ld58.p64)
@@ -853,6 +856,13 @@ function _init()
 	else
 		printh("WARNING: Failed to load " .. Config.satellite.model_file)
 	end
+
+	-- Initialize satellite position from config (can be updated dynamically later)
+	satellite_pos = {
+		x = Config.satellite.position.x,
+		y = Config.satellite.position.y,
+		z = Config.satellite.position.z
+	}
 end
 
 function _update()
@@ -910,8 +920,7 @@ function _update()
 					local dy = my - last_mouse_y
 
 					-- Update target camera rotation (Y axis up)
-					-- Invert yaw direction (negate dx)
-					target_ry = target_ry - dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y) - inverted
+					target_ry = target_ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
 					-- Enable pitch rotation with mouse Y movement
 					target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
 
@@ -933,8 +942,8 @@ function _update()
 
 	-- Check if mouse is hovering over satellite bounding box
 	satellite_hovered = false
-	if model_satellite then
-		local sat_pos = Config.satellite.position
+	if model_satellite and satellite_pos then
+		local sat_pos = satellite_pos
 		local sat_collider = Config.satellite.collider
 		local sat_box_min = {
 			x = sat_pos.x - sat_collider.half_size.x,
@@ -1036,15 +1045,15 @@ function _update()
 		-- Check fire button click
 		if mb & 1 == 1 then
 			if mx >= button_x and mx <= button_x + button_width and my >= button_y and my <= button_y + button_height then
-				if selected_target == "satellite" and model_satellite then
+				if selected_target == "satellite" and model_satellite and satellite_pos then
 					-- Fire photon beam at satellite
 					local beam = {
 						x = Config.ship.position.x,
 						y = Config.ship.position.y,
 						z = Config.ship.position.z,
-						target_x = Config.satellite.position.x,
-						target_y = Config.satellite.position.y,
-						target_z = Config.satellite.position.z,
+						target_x = satellite_pos.x,
+						target_y = satellite_pos.y,
+						target_z = satellite_pos.z,
 						age = 0,
 						lifetime = Config.photon_beam.beam_lifetime
 					}
@@ -1062,8 +1071,8 @@ function _update()
 
 	-- Smooth camera rotation (lerp towards target)
 	-- If satellite is targeted, aim camera at it instead of free rotation
-	if camera_locked_to_target and selected_target == "satellite" and model_satellite then
-		local sat_pos = Config.satellite.position
+	if camera_locked_to_target and selected_target == "satellite" and model_satellite and satellite_pos then
+		local sat_pos = satellite_pos
 		local ship_pos = Config.ship.position
 
 		-- Calculate direction from ship to satellite
@@ -1423,9 +1432,9 @@ function _draw()
 		end
 	end
 
-	-- Render satellite (from config)
-	if model_satellite then
-		local sat_pos = Config.satellite.position
+	-- Render satellite (from state, initialized from config)
+	if model_satellite and satellite_pos then
+		local sat_pos = satellite_pos
 		local sat_rot = Config.satellite.rotation
 		local satellite_faces = RendererLit.render_mesh(
 			model_satellite.verts, model_satellite.faces, camera,
@@ -1787,9 +1796,9 @@ function _draw()
 	end
 
 	-- Draw satellite bounding box (always shown, blue by default, yellow when hovered or targeted)
-	if model_satellite then
+	if model_satellite and satellite_pos then
 		local sat_collider = Config.satellite.collider
-		local sat_pos = Config.satellite.position
+		local sat_pos = satellite_pos
 		local sat_box_min_x = sat_pos.x - sat_collider.half_size.x
 		local sat_box_min_y = sat_pos.y - sat_collider.half_size.y
 		local sat_box_min_z = sat_pos.z - sat_collider.half_size.z
@@ -1870,9 +1879,9 @@ function _draw()
 	print("hp: " .. health_display, health_bar_x + health_bar_width + 10, health_bar_y, 7)
 
 	-- Draw target health bar and indicator if satellite is targeted (hovering above target in screen space)
-	if selected_target == "satellite" and model_satellite then
+	if selected_target == "satellite" and model_satellite and satellite_pos then
 		-- Project satellite position to screen to draw health bar above it
-		local sat_pos = Config.satellite.position
+		local sat_pos = satellite_pos
 		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)
 
 		if screen_x and screen_y then
@@ -1908,13 +1917,13 @@ function _draw()
 	if game_state == "playing" then
 		-- Check if satellite is in sensor range
 		local sat_in_range = false
-		if model_satellite then
-			local dx = Config.satellite.position.x - Config.ship.position.x
-			local dz = Config.satellite.position.z - Config.ship.position.z
+		if model_satellite and satellite_pos then
+			local dx = satellite_pos.x - Config.ship.position.x
+			local dz = satellite_pos.z - Config.ship.position.z
 			local dist_to_sat = sqrt(dx * dx + dz * dz)
 			sat_in_range = dist_to_sat <= Config.satellite.sensor_range
 		end
-		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius, Config.satellite.position, sat_in_range)
+		UIRenderer.draw_minimap(Config.ship.position, Config.planet.position, Config.planet.radius, satellite_pos, sat_in_range)
 	end
 
 	-- Death screen (with 2 second delay before showing)
