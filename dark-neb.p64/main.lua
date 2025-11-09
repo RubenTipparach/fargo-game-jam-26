@@ -125,6 +125,9 @@ local energy_system = {
 	sensors = Config.energy.systems.sensors.allocated,
 }
 
+-- Cached position variables for efficiency
+local ship_pos = nil  -- Current ship position (updated each frame)
+
 -- Weapon selection and charging state
 local selected_weapon = nil  -- Currently selected weapon (1 or 2)
 local weapon_states = {}  -- Charging and auto-fire state for each weapon
@@ -1103,6 +1106,9 @@ function _update()
 		return  -- Skip gameplay updates while in menu
 	end
 
+	-- Cache ship position at start of update
+	ship_pos = Config.ship.position
+
 	-- Mouse orbit controls (only in gameplay)
 
 	-- Check if mouse is over slider
@@ -1139,7 +1145,6 @@ function _update()
 
 				if is_charged and selected_target then
 					-- Fire beam at selected target
-					local ship_pos = Config.ship.position
 					local target_pos = nil
 					local target_ref = nil
 
@@ -1313,7 +1318,6 @@ function _update()
 	-- X key to fire debug beam (VFX only, no damage logic)
 	if keyp("x") then
 		printh("X KEY PRESSED - FIRING DEBUG BEAM!")
-		local ship_pos = Config.ship.position
 
 		-- Fire beam to satellite or planet
 		local target_pos = nil
@@ -1419,7 +1423,6 @@ function _update()
 
 
 		local sat_pos = satellite_pos
-		local ship_pos = Config.ship.position
 
 		-- Calculate target direction from ship to satellite (normalized)
 		local dx = sat_pos.x - ship_pos.x
@@ -1634,7 +1637,6 @@ function _update()
 		local planet_collider = Config.planet.collider
 
 		-- Calculate ship box bounds (world space)
-		local ship_pos = Config.ship.position
 		local ship_box_min = {
 			x = ship_pos.x - ship_collider.half_size.x,
 			y = ship_pos.y - ship_collider.half_size.y,
@@ -1863,8 +1865,7 @@ function _draw()
 	end
 
 	-- Render ship (from config) - skip if ship has been dead for configured time
-	if model_shippy and (not is_dead or death_time < Config.health.ship_disappear_time) then
-		local ship_pos = Config.ship.position
+	if model_shippy and ship_pos and (not is_dead or death_time < Config.health.ship_disappear_time) then
 		local ship_rot = Config.ship.rotation
 		local ship_yaw = dir_to_angle(ship_heading_dir) + 0.25  -- Convert direction to angle, add 90° offset for model alignment
 		local shippy_faces = RendererLit.render_mesh(
@@ -2296,10 +2297,9 @@ function _draw()
 	end
 
 	-- Draw physics debug wireframes if enabled
-	if Config.debug_physics then
+	if Config.debug_physics and ship_pos then
 		-- Draw ship collider wireframe
 		local ship_collider = Config.ship.collider
-		local ship_pos = Config.ship.position
 		local ship_box_min_x = ship_pos.x - ship_collider.half_size.x
 		local ship_box_min_y = ship_pos.y - ship_collider.half_size.y
 		local ship_box_min_z = ship_pos.z - ship_collider.half_size.z
