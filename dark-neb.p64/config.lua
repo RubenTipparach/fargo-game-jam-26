@@ -207,4 +207,52 @@ Config.explosion = {
 	dither_enabled = true,  -- Apply dithering for growing/fading effect
 }
 
+-- Energy system configuration
+Config.energy = {
+	max_total = 8,  -- Total energy available
+	bar_width = 8,  -- Width of each discrete energy rectangle
+	bar_height = 8,  -- Height of each energy rectangle
+	bar_spacing = 2,  -- Space between rectangles
+
+	-- System energy capacities and defaults
+	systems = {
+		weapons = {
+			capacity = 4,
+			allocated = 2,
+			color_full = 11,  -- Bright cyan
+			color_empty = 0,  -- Black/dark
+		},
+		impulse = {
+			capacity = 4,
+			allocated = 2,
+			color_full = 8,  -- Orange
+			color_empty = 0,
+		},
+		shields = {
+			capacity = 3,
+			allocated = 0,
+			color_full = 10,  -- Yellow
+			color_empty = 0,
+		},
+		tractor_beam = {
+			capacity = 2,
+			allocated = 0,
+			color_full = 13,  -- Blue
+			color_empty = 0,
+		},
+		sensors = {
+			capacity = 2,
+			allocated = 0,
+			color_full = 12,  -- Purple
+			color_empty = 0,
+		},
+	},
+
+	-- UI positions
+	ui_x = 10,  -- Left side position (vertical total energy bar)
+	ui_y = 30,  -- Below health bar
+	system_spacing = 35,  -- Vertical space between each system's energy bar
+	system_bar_x_offset = 50,  -- Horizontal offset for system energy bars from total energy bar
+}
+
 return Config

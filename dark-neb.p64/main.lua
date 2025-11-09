@@ -55,12 +55,14 @@ local target_ry = Config.camera.ry
 local mouse_drag = false
 local last_mouse_x = 0
 local last_mouse_y = 0
+local last_mouse_button_state = false  -- Track previous frame's button state for click detection
 
 -- Ship speed control
 local ship_speed = Config.ship.speed
 local target_ship_speed = Config.ship.speed
 
 -- Speed slider state
+local slider_speed_desired = Config.ship.speed  -- What the slider is set to (independent of impulse)
 local slider_dragging = false
 local slider_x = Config.slider.x
 local slider_y = Config.slider.y
@@ -102,6 +104,18 @@ local active_explosions = {}
 
 -- Spawned spheres (persistent objects)
 local spawned_spheres = {}
+
+-- Energy system state
+local energy_system = {
+	weapons = Config.energy.systems.weapons.allocated,
+	impulse = Config.energy.systems.impulse.allocated,
+	shields = Config.energy.systems.shields.allocated,
+	tractor_beam = Config.energy.systems.tractor_beam.allocated,
+	sensors = Config.energy.systems.sensors.allocated,
+}
+
+-- Photon beam charging state
+local photon_charge = 0  -- Current charge level (0-1)
 
 -- Generate random stars for background
 local star_positions = nil  -- Userdata storing star positions and colors
@@ -870,6 +884,154 @@ function _init()
 	}
 end
 
+-- Track energy block hit boxes for interactive allocation
+local energy_block_hitboxes = {}
+
+-- Build energy block hitboxes (called during update so clicks can use them)
+function build_energy_hitboxes()
+	local energy_cfg = Config.energy
+	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
+
+	-- Clear hitboxes from last frame
+	energy_block_hitboxes = {}
+
+	for i, system_name in ipairs(systems_list) do
+		local system_cfg = energy_cfg.systems[system_name]
+		local allocated = energy_system[system_name]
+		local capacity = system_cfg.capacity
+
+		-- Calculate position for this system's energy bar
+		local bar_y = energy_cfg.ui_y + (i - 1) * energy_cfg.system_spacing
+		local bar_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset
+
+		-- Create hitboxes for each energy unit
+		for j = 1, capacity do
+			local rect_x = bar_x + (j - 1) * (energy_cfg.bar_width + energy_cfg.bar_spacing)
+			local rect_y = bar_y
+			local rect_x2 = rect_x + energy_cfg.bar_width
+			local rect_y2 = rect_y + energy_cfg.bar_height
+
+			-- Store hitbox for this block
+			if energy_block_hitboxes[system_name] == nil then
+				energy_block_hitboxes[system_name] = {}
+			end
+			energy_block_hitboxes[system_name][j] = {
+				x1 = rect_x, y1 = rect_y, x2 = rect_x2, y2 = rect_y2,
+				is_filled = (j <= allocated)
+			}
+		end
+	end
+end
+
+-- Draw energy bars for each system
+function draw_energy_bars()
+	local energy_cfg = Config.energy
+	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
+
+	-- Draw vertical total energy bar on the left
+	draw_total_energy_bar()
+
+	for i, system_name in ipairs(systems_list) do
+		local system_cfg = energy_cfg.systems[system_name]
+		local allocated = energy_system[system_name]
+		local capacity = system_cfg.capacity
+
+		-- Calculate position for this system's energy bar
+		local bar_y = energy_cfg.ui_y + (i - 1) * energy_cfg.system_spacing
+		local bar_x = energy_cfg.ui_x + energy_cfg.system_bar_x_offset
+
+		-- Draw discrete rectangles for each energy unit
+		for j = 1, capacity do
+			local rect_x = bar_x + (j - 1) * (energy_cfg.bar_width + energy_cfg.bar_spacing)
+			local rect_y = bar_y
+			local rect_x2 = rect_x + energy_cfg.bar_width
+			local rect_y2 = rect_y + energy_cfg.bar_height
+
+			-- Determine color: full if j <= allocated, empty otherwise
+			local color = j <= allocated and system_cfg.color_full or system_cfg.color_empty
+
+			-- Draw filled rectangle
+			rectfill(rect_x, rect_y, rect_x2, rect_y2, color)
+
+			-- Draw border
+			rect(rect_x, rect_y, rect_x2, rect_y2, 7)
+		end
+
+		-- Draw system name label
+		print(system_name, bar_x + capacity * (energy_cfg.bar_width + energy_cfg.bar_spacing) + 5, bar_y, 7)
+	end
+end
+
+-- Draw the vertical total energy bar
+function draw_total_energy_bar()
+	local energy_cfg = Config.energy
+	local bar_x = energy_cfg.ui_x
+	local bar_y = energy_cfg.ui_y
+	local total_bars = energy_cfg.max_total
+	local bar_width = energy_cfg.bar_width
+	local bar_height = energy_cfg.bar_height
+	local spacing = energy_cfg.bar_spacing
+
+	-- Calculate total allocated energy
+	local total_allocated = energy_system.weapons + energy_system.impulse +
+	                        energy_system.shields + energy_system.tractor_beam +
+	                        energy_system.sensors
+
+	-- Draw vertical stack of energy blocks
+	for i = 1, total_bars do
+		local rect_y = bar_y + (i - 1) * (bar_height + spacing)
+		local rect_y2 = rect_y + bar_height
+		local color = i <= total_allocated and 7 or 0  -- White if filled, black if empty
+
+		-- Draw filled rectangle
+		rectfill(bar_x, rect_y, bar_x + bar_width, rect_y2, color)
+
+		-- Draw border
+		rect(bar_x, rect_y, bar_x + bar_width, rect_y2, 7)
+	end
+
+	-- Draw "E" label above total energy bar; we dont need this right now.
+	--print("E", bar_x - 3, bar_y - 6, 7)
+end
+
+-- Handle energy allocation/deallocation clicks
+function handle_energy_clicks(mx, my)
+	-- Check if clicking on a system energy block
+	for system_name, blocks in pairs(energy_block_hitboxes) do
+		for block_num, hitbox in pairs(blocks) do
+			if mx >= hitbox.x1 and mx <= hitbox.x2 and my >= hitbox.y1 and my <= hitbox.y2 then
+				-- Clicked on a block
+				if hitbox.is_filled then
+					-- Block is filled: deallocate all energy down to and including this block
+					-- First block clicked deallocates 1 energy, second deallocates 1 more, etc
+					energy_system[system_name] = block_num - 1
+				else
+					-- Block is empty: allocate energy to fill up to this block
+					local total_allocated = energy_system.weapons + energy_system.impulse +
+					                        energy_system.shields + energy_system.tractor_beam +
+					                        energy_system.sensors
+					local available = Config.energy.max_total - total_allocated
+					local system_cfg = Config.energy.systems[system_name]
+
+					-- Calculate how much to allocate
+					local current = energy_system[system_name]
+					local to_allocate = block_num - current  -- How many blocks to fill
+
+					if available >= to_allocate then
+						energy_system[system_name] = block_num
+					else
+						-- Only allocate as much as available
+						energy_system[system_name] = min(current + available, system_cfg.capacity)
+					end
+				end
+				printh("Energy allocated: " .. system_name .. " = " .. energy_system[system_name])
+				return true
+			end
+		end
+	end
+	return false
+end
+
 function _update()
 	-- Mouse input (used for menu and gameplay)
 	local mx, my, mb = mouse()
@@ -899,13 +1061,24 @@ function _update()
 	local over_slider = mx >= slider_x - 5 and mx <= slider_x + slider_width + 5 and
 	                    my >= slider_y and my <= slider_y + slider_height
 
-	if mb & 1 == 1 then  -- Left mouse button
+	-- Check if mouse is over energy UI area
+	local over_energy_ui = mx < 200 and my < 300
+
+	-- Check if button is newly pressed this frame (was not pressed last frame, is pressed now)
+	local button_pressed = (mb & 1 == 1) and not last_mouse_button_state
+	local button_held = (mb & 1 == 1)
+
+	if button_held then  -- Left mouse button
 		if over_slider then
 			-- Drag slider
 			slider_dragging = true
-			-- Calculate target speed from mouse Y position
+			-- Calculate desired speed from mouse Y position
 			local slider_pos = mid(0, (my - slider_y) / slider_height, 1)
-			target_ship_speed = (1 - slider_pos)  -- Inverted (top = max speed)
+			slider_speed_desired = (1 - slider_pos)  -- Inverted (top = max speed)
+		elseif over_energy_ui and button_pressed then
+			-- Handle energy block clicks ONLY on initial press, not while held
+			build_energy_hitboxes()
+			handle_energy_clicks(mx, my)
 		elseif not slider_dragging then
 			-- If camera is locked to target, left-click unsnaps it
 			if camera_locked_to_target then
@@ -1051,19 +1224,26 @@ function _update()
 		if mb & 1 == 1 then
 			if mx >= button_x and mx <= button_x + button_width and my >= button_y and my <= button_y + button_height then
 				if selected_target == "satellite" and model_satellite and satellite_pos then
-					-- Fire photon beam at satellite
-					local beam = {
-						x = Config.ship.position.x,
-						y = Config.ship.position.y,
-						z = Config.ship.position.z,
-						target_x = satellite_pos.x,
-						target_y = satellite_pos.y,
-						target_z = satellite_pos.z,
-						age = 0,
-						lifetime = Config.photon_beam.beam_lifetime
-					}
-					table.insert(photon_beams, beam)
-					printh("Photon beam fired at satellite!")
+					-- Check if we have enough weapons energy to fire (need 2 bars)
+					if energy_system.weapons >= 2 then
+						-- Fire photon beam at satellite
+						local beam = {
+							x = Config.ship.position.x,
+							y = Config.ship.position.y,
+							z = Config.ship.position.z,
+							target_x = satellite_pos.x,
+							target_y = satellite_pos.y,
+							target_z = satellite_pos.z,
+							age = 0,
+							lifetime = Config.photon_beam.beam_lifetime
+						}
+						table.insert(photon_beams, beam)
+						-- Consume 2 energy from weapons system
+						energy_system.weapons = energy_system.weapons - 2
+						printh("Photon beam fired! Weapons energy: " .. energy_system.weapons)
+					else
+						printh("Not enough weapons energy! Need 2 bars, have " .. energy_system.weapons)
+					end
 				end
 			end
 			-- Check auto toggle click
@@ -1077,7 +1257,7 @@ function _update()
 	-- MUST BE HERE TO ALLOW DEBUG DRAW TO WORK
 	-- Sync camera_heading_dir from camera.ry at start of each frame (camera.ry is the actual camera position)
 	camera_heading_dir = {x = sin(camera.ry), z = cos(camera.ry)}
-	printh("SYNC: camera.ry = " .. flr(camera.ry*10000)/10000)
+	-- printh("SYNC: camera.ry = " .. flr(camera.ry*10000)/10000)
 
 	-- Smooth camera rotation (using direction vectors like the ship)
 	-- If satellite is targeted, aim camera at it instead of free rotation
@@ -1155,6 +1335,16 @@ function _update()
 	if not camera_locked_to_target then
 		camera.ry = camera.ry + (target_ry - camera.ry) * smoothing
 	end
+
+	-- Calculate impulse energy multiplier
+	-- 0 energy = 0x multiplier, 1 energy = 0.25x, 2 energy = 0.5x, 3 energy = 0.75x, 4 energy = 1.0x
+	-- This multiplies the slider-controlled speed
+	local impulse_multiplier = energy_system.impulse / Config.energy.systems.impulse.capacity
+
+	-- Apply impulse multiplier to desired slider speed to get actual target speed
+	-- slider_speed_desired is independent and set only by the slider
+	-- impulse_multiplier reduces how much of the slider speed actually gets used
+	target_ship_speed = slider_speed_desired * impulse_multiplier
 
 	-- Smooth ship speed (lerp towards target)
 	ship_speed = ship_speed + (target_ship_speed - ship_speed) * Config.ship.speed_smoothing
@@ -1395,6 +1585,9 @@ function _update()
 	if is_dead then
 		death_time = death_time + 0.016
 	end
+
+	-- Update mouse button state for next frame's click detection
+	last_mouse_button_state = (mb & 1) == 1
 end
 
 -- Draw sun as a billboard sprite positioned opposite to light direction
@@ -1606,33 +1799,75 @@ function _draw()
 	-- Calculate angle difference to see if we need to draw the compass
 	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
 
+	-- Debug: Print values
+	-- if target_heading_dir.x ~= ship_heading_dir.x or target_heading_dir.z ~= ship_heading_dir.z then
+	-- 	printh("arc check - ship_speed: " .. ship_speed .. ", angle_diff: " .. angle_diff)
+	-- end
+
 	-- Draw compass if ship is moving or if there's a significant heading difference
-	if ship_speed > 0.01 or angle_diff > 0.01 then
+	-- Lowered thresholds from 0.01 to 0.001 for easier testing
+	if angle_diff > 0.001 then
 		local ship_x = Config.ship.position.x
 		local ship_z = Config.ship.position.z
+		local ship_y = Config.ship.position.y  -- Raise arc above ship for visibility
 		local arc_radius = Config.ship.heading_arc_radius
 		local segments = Config.ship.heading_arc_segments
 
 		-- Draw current ship heading line (blue/cyan)
 		local current_x = ship_x + ship_heading_dir.x * arc_radius
 		local current_z = ship_z + ship_heading_dir.z * arc_radius
-		draw_line_3d(ship_x, 0, ship_z, current_x, 0, current_z, camera, 13)  -- Blue (cyan)
+		draw_line_3d(ship_x, ship_y, ship_z, current_x, ship_y, current_z, camera, 13)  -- Blue (cyan)
 
 		-- Draw arc by interpolating between current and target directions
 		local arc_color = 10  -- Yellow
+
+		-- Convert to quaternions once, outside the loop
+		local q_current = dir_to_quat(ship_heading_dir)
+		local q_target = dir_to_quat(target_heading_dir)
+
+		printh("arc quat current: w=" .. q_current.w .. " x=" .. q_current.x .. " y=" .. q_current.y .. " z=" .. q_current.z)
+		printh("arc quat target: w=" .. q_target.w .. " x=" .. q_target.x .. " y=" .. q_target.y .. " z=" .. q_target.z)
 
 		for i = 0, segments - 1 do
 			local t1 = i / segments
 			local t2 = (i + 1) / segments
 
-			-- SLERP between current and target for smooth arc
-			local q1_current = dir_to_quat(ship_heading_dir)
-			local q1_target = dir_to_quat(target_heading_dir)
-			local q_arc1 = quat_slerp(q1_current, q1_target, t1)
-			local q_arc2 = quat_slerp(q1_current, q1_target, t2)
+			-- Linear quaternion interpolation between current and target
+			-- Simple lerp: q = q1 + t * (q2 - q1), then normalize
+			local q_arc1 = {
+				w = q_current.w + t1 * (q_target.w - q_current.w),
+				x = q_current.x + t1 * (q_target.x - q_current.x),
+				y = q_current.y + t1 * (q_target.y - q_current.y),
+				z = q_current.z + t1 * (q_target.z - q_current.z)
+			}
+			local q_arc2 = {
+				w = q_current.w + t2 * (q_target.w - q_current.w),
+				x = q_current.x + t2 * (q_target.x - q_current.x),
+				y = q_current.y + t2 * (q_target.y - q_current.y),
+				z = q_current.z + t2 * (q_target.z - q_current.z)
+			}
+
+			-- Normalize quaternions
+			local len1 = sqrt(q_arc1.w*q_arc1.w + q_arc1.x*q_arc1.x + q_arc1.y*q_arc1.y + q_arc1.z*q_arc1.z)
+			if len1 > 0.0001 then
+				q_arc1.w = q_arc1.w / len1
+				q_arc1.x = q_arc1.x / len1
+				q_arc1.y = q_arc1.y / len1
+				q_arc1.z = q_arc1.z / len1
+			end
+
+			local len2 = sqrt(q_arc2.w*q_arc2.w + q_arc2.x*q_arc2.x + q_arc2.y*q_arc2.y + q_arc2.z*q_arc2.z)
+			if len2 > 0.0001 then
+				q_arc2.w = q_arc2.w / len2
+				q_arc2.x = q_arc2.x / len2
+				q_arc2.y = q_arc2.y / len2
+				q_arc2.z = q_arc2.z / len2
+			end
 
 			local dir1 = quat_to_dir(q_arc1)
 			local dir2 = quat_to_dir(q_arc2)
+
+			printh("arc segment " .. i .. ": t1=" .. t1 .. " t2=" .. t2 .. " dir1=(" .. dir1.x .. "," .. dir1.z .. ") dir2=(" .. dir2.x .. "," .. dir2.z .. ")")
 
 			-- Calculate 3D positions on the arc
 			local x1 = ship_x + dir1.x * arc_radius
@@ -1640,14 +1875,16 @@ function _draw()
 			local x2 = ship_x + dir2.x * arc_radius
 			local z2 = ship_z + dir2.z * arc_radius
 
+			printh("arc line " .. i .. ": (" .. x1 .. "," .. ship_y .. "," .. z1 .. ") -> (" .. x2 .. "," .. ship_y .. "," .. z2 .. ")")
+
 			-- Project to screen and draw line
-			draw_line_3d(x1, 0, z1, x2, 0, z2, camera, arc_color)
+			draw_line_3d(x1, ship_y, z1, x2, ship_y, z2, camera, arc_color)
 		end
 
 		-- Draw target heading line (bright yellow)
 		local target_x = ship_x + target_heading_dir.x * arc_radius
 		local target_z = ship_z + target_heading_dir.z * arc_radius
-		draw_line_3d(ship_x, 0, ship_z, target_x, 0, target_z, camera, 11)  -- Bright yellow
+		draw_line_3d(ship_x, ship_y, ship_z, target_x, ship_y, target_z, camera, 11)  -- Bright yellow
 	end
 
 	-- local ship_pos = Config.ship.position
@@ -1686,8 +1923,8 @@ function _draw()
 	-- Slider border
 	rect(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 7)
 
-	-- Slider handle (position based on target speed)
-	local handle_y = slider_y + (1 - target_ship_speed) * slider_height - slider_handle_height / 2
+	-- Slider handle (position based on desired slider speed, independent of impulse)
+	local handle_y = slider_y + (1 - slider_speed_desired) * slider_height - slider_handle_height / 2
 	handle_y = mid(slider_y, handle_y, slider_y + slider_height - slider_handle_height)
 	rectfill(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 7)
 	rect(slider_x - 2, handle_y, slider_x + slider_width + 2, handle_y + slider_handle_height, 6)
@@ -1960,6 +2197,9 @@ function _draw()
 
 	-- Health bar border (white)
 	rect(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 7)
+
+	-- Draw energy bars
+	draw_energy_bars()
 
 	-- Health text
 	local health_display = flr(current_health)
