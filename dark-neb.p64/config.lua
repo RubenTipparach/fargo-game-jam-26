@@ -6,7 +6,7 @@ local Config = {}
 -- Debug flags
 Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
-Config.show_cpu = true  -- Always show CPU stats
+Config.show_cpu = false  -- Always show CPU stats
 Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
 Config.enable_x_button = false  -- Enable X button input (disabled for now)
 Config.show_firing_arcs = false  -- Always show firing arc visualization
@@ -214,6 +214,23 @@ Config.explosion = {
 	dither_enabled = true,  -- Apply dithering for growing/fading effect
 }
 
+-- Music configuration
+Config.music = {
+	-- Mission 1 & 2 music
+	missions_1_2 = {
+		sfx_file = "sfx/novSong.sfx",
+		pattern = 3,  -- Start playing from pattern 3
+		memory_address = 0x80000,  -- Memory address to load music into
+	},
+	-- Mission 3 & 4 music
+	missions_3_4 = {
+		sfx_file = "sfx/darkneb.sfx",
+		pattern = 8,  -- Start playing from pattern 8
+		memory_address = 0x80000,  -- Memory address to load music into
+		
+	},
+}
+
 -- Weapons configuration
 Config.weapons = {
 	{
@@ -385,6 +402,8 @@ Config.missions = {
 		description = "Learn basic controls",
 		ship_start = {x = 0, y = 0, z = 0},
 		planet_start = {x = 50, y = 0, z = 0},
+		show_planet = true,
+		show_progress_slider = true,
 		-- No satellites for tutorial mission
 		satellites = {},
 		objectives = {
@@ -400,6 +419,8 @@ Config.missions = {
 		description = "Destroy the satellites",
 		ship_start = {x = 0, y = 0, z = 0},
 		planet_start = {x = 50, y = 0, z = 0},
+		show_planet = true,
+		show_progress_slider = true,
 		-- Satellite definitions for this mission
 		-- Both satellites positioned ~100m away from ship start (0, 0, 0)
 		satellites = {
@@ -451,7 +472,8 @@ Config.missions = {
 		name = "Mission 3: Patrol",
 		description = "Find and destroy the enemy Grabon",
 		ship_start = {x = 0, y = 0, z = 0},
-		planet_start = {x = 50, y = 0, z = 0},
+		show_planet = false,
+		show_progress_slider = false,
 		-- Enemy Grabon AI opponent
 		enemies = {
 			{
@@ -460,7 +482,131 @@ Config.missions = {
 				rotation = {pitch = 0, yaw = 0, roll = 0},
 				heading = 0.5,  -- Initial heading (0-1 turns)
 				model_file = "models/grabons.obj",
-				sprite_id = 3,
+				sprite_id = 1,
+				max_health = 150,
+				current_health = 150,
+				armor = 2.0,  -- Tougher than satellites
+				sensor_range = 250,  -- Can detect player from far away
+				-- AI behavior
+				ai = {
+					-- Movement
+					speed = 0.5,  -- Allocated speed (0-1)
+					max_speed = 1.0,
+					turn_rate = 0.001,  -- Slow rotation towards target
+					-- Combat
+					target_detection_range = 250,
+					attack_range = 70,
+					firing_arc_start = -90,  -- Weapon arc
+					firing_arc_end = 90,
+					-- Dual weapons (like player ship)
+					weapons = {
+						{
+							name = "Primary Cannon",
+							charge_time = 2.0,
+							fire_rate = 3.0,  -- Seconds between shots
+							range = 80,
+							damage = 5,
+							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
+						},
+						{
+							name = "Secondary Cannon",
+							charge_time = 2.5,
+							fire_rate = 3.0,
+							range = 80,
+							damage = 5,
+							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
+						},
+					},
+				},
+				collider = {
+					type = "box",
+					half_size = {x = 2.5, y = 1.5, z = 3.5},  -- Slightly larger than satellite
+				},
+				bounding_box_color_default = 8,  -- Red (enemy)
+				bounding_box_color_hover = 10,  -- Yellow when targeted
+			},
+		},
+		objectives = {
+			{
+				type = "find_and_destroy",
+				target = "grabon",
+				min_health_percent = 0,  -- Fully destroy
+			},
+		},
+	},
+	-- Mission 4: Dual Combat - Two enemy Grabons
+	mission_4 = {
+		name = "Mission 4: Dual Combat",
+		description = "Destroy both enemy Emularns",
+		ship_start = {x = 0, y = 0, z = 0},
+		show_planet = false,
+		show_progress_slider = false,
+		-- Two Enemy Grabon AI opponents
+		enemies = {
+			{
+				id = "emularn_1",
+				position = {x = 80, y = 0, z = 80},  -- First Grabon (northeast)
+				rotation = {pitch = 0, yaw = 0, roll = 0},
+				heading = 0.75,  -- Initial heading (0-1 turns)
+				model_file = "models/Emularns.obj",
+				sprite_id = 4,
+				max_health = 150,
+				current_health = 150,
+				armor = 2.0,  -- Tougher than satellites
+				sensor_range = 250,  -- Can detect player from far away
+				-- AI behavior
+				ai = {
+					-- Movement
+					speed = 0.5,  -- Allocated speed (0-1)
+					max_speed = 1.0,
+					turn_rate = 0.001,  -- Slow rotation towards target
+					-- Combat
+					target_detection_range = 250,
+					attack_range = 80,
+					firing_arc_start = -90,  -- Weapon arc
+					firing_arc_end = 90,
+					-- Dual weapons (like player ship)
+					weapons = {
+						{
+							name = "Primary Cannon",
+							charge_time = 2.0,
+							fire_rate = 3.0,  -- Seconds between shots
+							range = 70,
+							damage = 5,
+							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
+						},
+						{
+							name = "Secondary Cannon",
+							charge_time = 2.5,
+							fire_rate = 3.0,
+							range = 80,
+							damage = 5,
+							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
+						},
+					},
+				},
+				collider = {
+					type = "box",
+					half_size = {x = 2.5, y = 1.5, z = 3.5},  -- Slightly larger than satellite
+				},
+				bounding_box_color_default = 8,  -- Red (enemy)
+				bounding_box_color_hover = 10,  -- Yellow when targeted
+			},
+			{
+				id = "emularn_2",
+				position = {x = -80, y = 0, z = -80},  -- Second Grabon (southwest)
+				rotation = {pitch = 0, yaw = 0, roll = 0},
+				heading = 0.25,  -- Initial heading (0-1 turns)
+				model_file = "models/Emularns.obj",
+				sprite_id = 4,
 				max_health = 150,
 				current_health = 150,
 				armor = 2.0,  -- Tougher than satellites
@@ -512,7 +658,7 @@ Config.missions = {
 			{
 				type = "find_and_destroy",
 				target = "grabon",
-				min_health_percent = 0,  -- Fully destroy
+				min_health_percent = 0,  -- Fully destroy both
 			},
 		},
 	},

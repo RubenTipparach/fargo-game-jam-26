@@ -1019,7 +1019,7 @@ end
 -- Load satellites for current mission
 function reload_mission_satellites()
 	local current_mission_num = Missions.get_current_mission().id
-	local mission = current_mission_num == 1 and Config.missions.mission_1 or (current_mission_num == 2 and Config.missions.mission_2) or Config.missions.mission_3
+	local mission = current_mission_num == 1 and Config.missions.mission_1 or (current_mission_num == 2 and Config.missions.mission_2) or (current_mission_num == 3 and Config.missions.mission_3) or Config.missions.mission_4
 
 	-- Reset enemy ships list
 	enemy_ships = {}
@@ -1108,6 +1108,15 @@ function reload_mission_satellites()
 
 			table.insert(enemy_ships, enemy)
 		end
+	end
+
+	-- Load planet position from mission config if available
+	if mission.planet_start then
+		Config.planet.position = {
+			x = mission.planet_start.x,
+			y = mission.planet_start.y,
+			z = mission.planet_start.z
+		}
 	end
 end
 
@@ -1288,52 +1297,52 @@ function update_grabon_ai()
 							end
 
 							-- Fire if enough time has passed
-						if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
-							-- Fire beam from Grabon towards player
-							-- Calculate muzzle position using weapon offset
-							local muzzle_offset = weapon.muzzle_offset or {x = 0, y = 0, z = 0}
-							local muzzle_pos = {
-								x = enemy.position.x + muzzle_offset.x,
-								y = enemy.position.y + muzzle_offset.y,
-								z = enemy.position.z + muzzle_offset.z,
-							}
-							WeaponEffects.fire_beam(muzzle_pos, ship_pos, 12)  -- Sprite 12 for Grabon disruptor beams
-							-- Apply shield absorption first
-							local health_before = player_health_obj.current_health
-							local shield_absorbed = apply_shield_absorption()
-							if not shield_absorbed then
-								-- Shields didn't absorb, apply damage to health
-								WeaponEffects.spawn_explosion(ship_pos, player_health_obj)
-								-- Sync current_health with player_health_obj
-								current_health = player_health_obj.current_health
-								-- Check if player died
-								if current_health <= 0 then
-									is_dead = true
-									death_time = 0
-									-- Spawn explosion at ship position when player dies
-									if Config.explosion.enabled then
-										table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
-										sfx(3)
+							if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
+								-- Fire beam from Grabon towards player
+								-- Calculate muzzle position using weapon offset
+								local muzzle_offset = weapon.muzzle_offset or {x = 0, y = 0, z = 0}
+								local muzzle_pos = {
+									x = enemy.position.x + muzzle_offset.x,
+									y = enemy.position.y + muzzle_offset.y,
+									z = enemy.position.z + muzzle_offset.z,
+								}
+								WeaponEffects.fire_beam(muzzle_pos, ship_pos, 12)  -- Sprite 12 for Grabon disruptor beams
+								-- Apply shield absorption first
+								local health_before = player_health_obj.current_health
+								local shield_absorbed = apply_shield_absorption()
+								if not shield_absorbed then
+									-- Shields didn't absorb, apply damage to health
+									WeaponEffects.spawn_explosion(ship_pos, player_health_obj)
+									-- Sync current_health with player_health_obj
+									current_health = player_health_obj.current_health
+									-- Check if player died
+									if current_health <= 0 then
+										is_dead = true
+										death_time = 0
+										-- Spawn explosion at ship position when player dies
+										if Config.explosion.enabled then
+											table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+											sfx(3)
+										end
 									end
+									-- Reset shield charge progress when hit without shields
+									for i = 1, 3 do
+										shield_charge.boxes[i] = 0
+									end
+									-- Spawn additional damage effects when player takes health damage
+									if player_health_obj.current_health < health_before then
+										WeaponEffects.spawn_smoke(ship_pos)
+									end
+								else
+									printh("Shield absorbed Grabon attack!")
 								end
-								-- Reset shield charge progress when hit without shields
-								for i = 1, 3 do
-									shield_charge.boxes[i] = 0
-								end
-								-- Spawn additional damage effects when player takes health damage
-								if player_health_obj.current_health < health_before then
-									WeaponEffects.spawn_smoke(ship_pos)
-								end
-							else
-								printh("Shield absorbed Grabon attack!")
+								-- Track firing time
+								enemy.ai_last_weapon_fire_time[w] = current_time
 							end
-							-- Track firing time
-							enemy.ai_last_weapon_fire_time[w] = current_time
 						end
 					end
 				end
 			end
-		end
 		end
 	end
 end
@@ -1675,11 +1684,47 @@ function _update()
 					energy_system.shields = 0
 					energy_system.sensors = 0  -- Sensors disabled for Mission 3
 					energy_system.tractor_beam = 0
+				elseif selected_mission.id == "mission_4" then
+					-- Load mission 4
+					Missions.advance_mission()  -- Switch to mission 2
+					Missions.advance_mission()  -- Switch to mission 3
+					Missions.advance_mission()  -- Switch to mission 4
+					-- Mission 4: Focus on combat (impulse and weapons, shields for defense)
+					Config.energy.systems.impulse.allocated = 2
+					Config.energy.systems.weapons.allocated = 4
+					Config.energy.systems.shields.allocated = 2  -- Shields to defend against two enemies
+					Config.energy.systems.sensors.allocated = 0  -- Sensors disabled for Mission 4
+					Config.energy.systems.tractor_beam.allocated = 0
+					-- Reset local energy_system table to match
+					energy_system.weapons = 4
+					energy_system.impulse = 2
+					energy_system.shields = 2
+					energy_system.sensors = 0  -- Sensors disabled for Mission 4
+					energy_system.tractor_beam = 0
 				end
 			end
 
 			-- Load satellites for the selected mission
 			reload_mission_satellites()
+
+			-- Load and play music based on mission
+			local current_mission = Missions.get_current_mission()
+			if current_mission then
+				local music_config
+				if current_mission.id == 1 or current_mission.id == 2 then
+					music_config = Config.music.missions_1_2
+				elseif current_mission.id == 3 or current_mission.id == 4 then
+					music_config = Config.music.missions_3_4
+				end
+
+				if music_config then
+					-- Load music file into memory and play
+					fetch(music_config.sfx_file):poke(music_config.memory_address)
+					music(music_config.pattern, nil, nil, music_config.memory_address)
+					-- Set music volume to 50% (0x20 = 0x40 / 2)
+					poke(0x5539, 0x20)
+				end
+			end
 
 			-- Register autonomous smoke spawners for player and satellite
 			-- Player ship: spawn smoke when health < 30%
@@ -2393,8 +2438,8 @@ function _update()
 		end
 	end
 
-	-- Update Grabon AI for Mission 3
-	if Missions.get_current_mission().id == 3 then
+	-- Update Grabon AI for Mission 3 and Mission 4
+	if Missions.get_current_mission().id == 3 or Missions.get_current_mission().id == 4 then
 		update_grabon_ai()
 	end
 
@@ -2634,6 +2679,23 @@ function _update()
 				end
 			end
 			Missions.update_destroy_objective(grabon_destroyed)
+		elseif current_mission.id == 4 then
+			-- Update mission 4 objectives
+			Missions.update_search_objective_m4(current_selected_target)
+			-- Check if player took damage (engaged by Grabons)
+			local took_damage = current_health < player_health_obj.current_health
+			if took_damage then
+				Missions.update_engage_objective_m4(1)  -- 1 = took damage
+				player_health_obj.current_health = current_health  -- Update tracker
+			end
+			-- Count alive Grabons
+			local grabons_alive = 0
+			for _, enemy in ipairs(enemy_ships) do
+				if enemy.type == "grabon" and not enemy.is_destroyed then
+					grabons_alive = grabons_alive + 1
+				end
+			end
+			Missions.update_destroy_objective_m4(grabons_alive)
 		end
 
 		-- Check if current mission is complete
@@ -2718,7 +2780,7 @@ function draw_shield_status()
 	local border_color = shield_cfg.border_color
 
 	-- Draw title
-	print("shields", panel_x, panel_y + shield_cfg.label_y_offset, border_color)
+	-- print("shields", panel_x, panel_y + shield_cfg.label_y_offset, border_color)
 
 	-- Draw 3 shield charge bars side by side
 	for i = 1, 3 do
@@ -2762,8 +2824,14 @@ function _draw()
 	local light_dir = get_light_direction()
 
 	-- Render planet with lit shader (same as ship)
-	-- Skip planet rendering for Mission 3 (empty space)
-	if model_planet and Missions.get_current_mission().id ~= 3 then
+	-- Check mission config for show_planet flag
+	local current_mission = Missions.get_current_mission()
+	local mission_config = current_mission.id == 1 and Config.missions.mission_1 or
+	                        current_mission.id == 2 and Config.missions.mission_2 or
+	                        current_mission.id == 3 and Config.missions.mission_3 or
+	                        Config.missions.mission_4
+	local show_planet = mission_config and mission_config.show_planet ~= false
+	if model_planet and show_planet then
 		local planet_pos = Config.planet.position
 		local planet_rot = Config.planet.rotation
 
@@ -2841,7 +2909,7 @@ function _draw()
 			local grabon_faces = RendererLit.render_mesh(
 				enemy.model.verts, enemy.model.faces, camera,
 				grabon_pos.x, grabon_pos.y, grabon_pos.z,
-				nil,  -- sprite override
+				enemy.config.sprite_id,  -- sprite override from config
 				light_dir,  -- light direction (directional light)
 				nil,  -- light radius (unused for directional)
 				light_brightness,  -- light brightness
@@ -2983,8 +3051,10 @@ function _draw()
 	-- 	draw_line_3d(ship_pos.x, ship_pos.y + 2, ship_pos.z, target_heading_end_x, ship_pos.y + 2, target_heading_end_z, camera, 10)  -- Bright yellow
 	-- end
 
-	-- Draw speed slider
-	-- Slider track (background)
+	-- Draw speed slider (check mission config for show_progress_slider flag)
+	local show_progress_slider = mission_config and mission_config.show_progress_slider ~= false
+	--if show_progress_slider then
+		-- Slider track (background)
 	rectfill(slider_x, slider_y, slider_x + slider_width, slider_y + slider_height, 1)
 
 	-- Current speed fill (shows actual ship speed - acceleration progress)
@@ -3008,6 +3078,7 @@ function _draw()
 	local text_x = slider_x + Config.slider.text_x_offset
 	local text_y = slider_y + slider_height + Config.slider.text_y_offset
 	print(Config.slider.text_prefix .. speed_display, text_x, text_y, Config.slider.text_color)
+	--end
 
 	-- Draw photon beam button and auto toggle
 	if Config.photon_beam.enabled then

@@ -48,6 +48,11 @@ local mission_3_grabon_detected = false  -- Whether player has detected the Grab
 local mission_3_grabon_engaged = false  -- Whether player has engaged with Grabon
 local mission_3_grabon_destroyed = false  -- Whether Grabon is destroyed
 
+-- Mission 4 specific tracking
+local mission_4_grabons_detected = false  -- Whether player has detected the Grabons
+local mission_4_grabons_engaged = false  -- Whether player has engaged with Grabons
+local mission_4_grabons_alive = 2  -- Number of Grabons still alive
+
 -- Mission 1: Movement and Camera Control
 -- Goals: Move camera, rotate ship, move to designated position
 local MISSION_1 = {
@@ -143,10 +148,42 @@ local MISSION_3 = {
 	},
 }
 
+-- Mission 4: Dual Combat - Two enemy Grabons
+-- Goals: Find and destroy both enemy Grabons
+local MISSION_4 = {
+	id = 4,
+	name = "Dual Combat",
+	description = "Destroy both enemy Grabons",
+	objectives = {
+		{
+			id = "search",
+			name = "Search for the enemies",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+		{
+			id = "engage",
+			name = "Engage the Grabons",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+		{
+			id = "destroy",
+			name = "Destroy both Grabons",
+			progress = 0,
+			target = 1.0,
+			completed = false,
+		},
+	},
+}
+
 local MISSIONS = {
 	MISSION_1,
 	MISSION_2,
 	MISSION_3,
+	MISSION_4,
 }
 
 -- Initialize missions
@@ -197,6 +234,11 @@ function Missions.init(config)
 	mission_3_grabon_detected = false
 	mission_3_grabon_engaged = false
 	mission_3_grabon_destroyed = false
+
+	-- Reset Mission 4 specific tracking variables
+	mission_4_grabons_detected = false
+	mission_4_grabons_engaged = false
+	mission_4_grabons_alive = 2
 
 	-- Show first objective for mission 1
 	Missions.show_next_objective()
@@ -536,6 +578,15 @@ function Missions.show_next_objective()
 				elseif i == 3 then
 					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDestroy the Grabon!\nMove into range,\nfire weapons to destroy it"
 				end
+			elseif mission.id == 4 then
+				-- Mission 4 instructions
+				if i == 1 then
+					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nFind both Grabons!"
+				elseif i == 2 then
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nDraw their fire.\nEvade and counterattack"
+				elseif i == 3 then
+					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDestroy both!\nManage both targets,\nfire and maneuver"
+				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
 			end
@@ -553,6 +604,8 @@ function Missions.show_next_objective()
 		dialog_text = "Mission Success!!!\n\nYou've graduated top\nof your class with\nincredible fanfare.\nYou have a bright\nfuture ahead!"
 	elseif current_mission == 3 then
 		dialog_text = "Mission Success!!!\n\nYou've defeated the\nenemy Grabon! Your\nfirst real combat\nvictory. Well done!"
+	elseif current_mission == 4 then
+		dialog_text = "Mission Success!!!\n\nYou've destroyed both\nenemies! You are a\ntrue combat veteran.\nExcellent work!"
 	else
 		dialog_text = "Mission Success!!!\n\nClick OK to return\nto main menu"
 	end
@@ -606,6 +659,11 @@ function Missions.advance_mission()
 		mission_3_grabon_detected = false
 		mission_3_grabon_engaged = false
 		mission_3_grabon_destroyed = false
+
+		-- Reset Mission 4 specific tracking variables
+		mission_4_grabons_detected = false
+		mission_4_grabons_engaged = false
+		mission_4_grabons_alive = 2
 
 		-- Initialize next mission's data and reset all objective progress
 		local mission = MISSIONS[current_mission]
@@ -1010,5 +1068,81 @@ Missions.update_combat_objective = Missions.update_combat_objective
 Missions.update_search_objective = Missions.update_search_objective
 Missions.update_engage_objective = Missions.update_engage_objective
 Missions.update_destroy_objective = Missions.update_destroy_objective
+
+-- Update search objective for Mission 4
+-- Tracks if player has detected any Grabon
+function Missions.update_search_objective_m4(current_target)
+	if current_mission ~= 4 then return end
+
+	local mission = MISSIONS[4]
+	local obj = mission.objectives[1]  -- Search objective
+
+	-- Player has detected Grabons if they have any as current target
+	if current_target and current_target.type == "grabon" and not mission_4_grabons_detected then
+		mission_4_grabons_detected = true
+	end
+
+	-- Progress is either 0 or 1 (detected or not)
+	obj.progress = mission_4_grabons_detected and 1.0 or 0
+
+	-- Mark complete when Grabons detected
+	if mission_4_grabons_detected and not obj.completed then
+		obj.completed = true
+		if not shown_dialogs["search_done_m4"] then
+			shown_dialogs["search_done_m4"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update engage objective for Mission 4
+-- Tracks if player has engaged combat with Grabons
+function Missions.update_engage_objective_m4(player_health_loss)
+	if current_mission ~= 4 then return end
+
+	local mission = MISSIONS[4]
+	local obj = mission.objectives[2]  -- Engage objective
+
+	-- Player has engaged if they've taken damage from Grabon fire
+	if player_health_loss and player_health_loss > 0 and not mission_4_grabons_engaged then
+		mission_4_grabons_engaged = true
+	end
+
+	-- Progress is either 0 or 1 (engaged or not)
+	obj.progress = mission_4_grabons_engaged and 1.0 or 0
+
+	-- Mark complete when engaged
+	if mission_4_grabons_engaged and not obj.completed then
+		obj.completed = true
+		if not shown_dialogs["engage_done_m4"] then
+			shown_dialogs["engage_done_m4"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
+
+-- Update destroy objective for Mission 4
+-- Tracks if all Grabons are destroyed
+function Missions.update_destroy_objective_m4(grabons_alive)
+	if current_mission ~= 4 then return end
+
+	local mission = MISSIONS[4]
+	local obj = mission.objectives[3]  -- Destroy objective
+
+	-- Update alive count
+	mission_4_grabons_alive = grabons_alive or 0
+
+	-- Progress based on Grabons destroyed (2 total, so destroy 1 = 50%, destroy 2 = 100%)
+	obj.progress = math.max(0, (2 - mission_4_grabons_alive) / 2)
+
+	-- Mission complete when all Grabons destroyed
+	if mission_4_grabons_alive <= 0 and not obj.completed then
+		obj.completed = true
+		if not shown_dialogs["destroy_done_m4"] then
+			shown_dialogs["destroy_done_m4"] = true
+			Missions.show_next_objective()
+		end
+	end
+end
 
 return Missions
