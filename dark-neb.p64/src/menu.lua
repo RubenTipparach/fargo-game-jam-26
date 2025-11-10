@@ -7,6 +7,7 @@ local Menu = {}
 Menu.state = "menu"  -- "menu", "playing", "game_over"
 Menu.selected_mission = 1
 Menu.missions = nil  -- Will be populated from config
+Menu.last_button_click_state = false  -- Track previous click state for button-down detection
 
 -- Initialize menu with missions from config
 function Menu.init(config)
@@ -45,7 +46,7 @@ function Menu.draw()
 	cls(0)
 
 	-- Draw title
-	local title = "DARK NEB"
+	local title = "DARK NEBULA"
 	local title_x = 240 - (#title * 2)
 	print(title, title_x - 1, 29, 0)  -- Shadow
 	print(title, title_x, 28, 11)     -- Yellow text
@@ -93,13 +94,17 @@ function Menu.update(input, mouse_x, mouse_y, mouse_click)
 			if mouse_x >= bounds.x1 and mouse_x <= bounds.x2 and
 			   mouse_y >= bounds.y1 and mouse_y <= bounds.y2 then
 				Menu.selected_mission = i
-				-- If clicked, select the mission
-				if mouse_click then
+				-- Detect click on button down (transition from not clicked to clicked)
+				if mouse_click and not Menu.last_button_click_state then
+					Menu.last_button_click_state = mouse_click
 					return true
 				end
 			end
 		end
 	end
+
+	-- Update last click state for next frame
+	Menu.last_button_click_state = mouse_click
 
 	-- Handle keyboard navigation (arrow keys)
 	if keyp("up") or keyp("w") then

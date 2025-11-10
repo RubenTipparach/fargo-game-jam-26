@@ -62,12 +62,12 @@ function UIRenderer.init(modules, config, callbacks)
 		ui_state.death_panel:set_colors(0, 7, 8)  -- Black bg, white border, red title
 	end
 
-	-- Create restart button
+	-- Create restart button (positioned at bottom of death panel)
 	if Button then
 		ui_state.restart_button = Button.new(
-			150,
-			100,
-			180,
+			240,
+			190,
+			80,
 			30,
 			"MENU",
 			callbacks.on_restart or function() printh("restart_game") end

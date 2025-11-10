@@ -21,6 +21,7 @@ function Button.new(x, y, width, height, text, callback)
 	self.callback = callback
 	self.is_hovered = false
 	self.is_pressed = false
+	self.last_clicked_state = false  -- Track previous click state for button-down detection
 
 	return self
 end
@@ -33,8 +34,8 @@ function Button:update(mouse_x, mouse_y, mouse_clicked)
 	self.is_hovered = mouse_x >= self.x and mouse_x <= self.x + self.width and
 	                   mouse_y >= self.y and mouse_y <= self.y + self.height
 
-	-- Check for click
-	if self.is_hovered and mouse_clicked then
+	-- Check for click on button down (transition from not clicked to clicked)
+	if self.is_hovered and mouse_clicked and not self.last_clicked_state then
 		self.is_pressed = true
 		if self.callback then
 			self.callback()
@@ -42,6 +43,9 @@ function Button:update(mouse_x, mouse_y, mouse_clicked)
 	else
 		self.is_pressed = false
 	end
+
+	-- Update last click state for next frame
+	self.last_clicked_state = mouse_clicked and self.is_hovered
 end
 
 -- Draw the button

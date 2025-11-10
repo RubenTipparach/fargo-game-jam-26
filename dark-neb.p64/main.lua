@@ -1263,7 +1263,7 @@ function update_grabon_ai()
 			end
 
 						-- Fire weapons if in range and in firing arc
-				if target_distance < ai.attack_range then
+				if target_distance < ai.attack_range and not is_dead then
 					-- Calculate if target is in firing arc
 					local heading_to_target = atan2(dx, dz) / (2 * math.pi)
 					if heading_to_target < 0 then heading_to_target = heading_to_target + 1 end
@@ -2466,6 +2466,11 @@ function _update()
 					if current_health <= 0 then
 						is_dead = true
 						death_time = 0
+						-- Spawn explosion at ship position when player dies
+						if Config.explosion.enabled then
+							table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+							sfx(3)
+						end
 					end
 
 					-- Mark this pair as colliding
