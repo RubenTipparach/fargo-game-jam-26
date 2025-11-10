@@ -54,6 +54,7 @@ Config.ship = {
 	heading = 0,  -- Current heading in turns (0-1 range, 0 = +Z axis)
 	target_heading = 0,  -- Target heading to turn towards (0-1 range)
 	turn_rate = 0.0008,  -- Turns per frame (higher = faster turns)
+	arrow_key_rotation_speed = 0.01,  -- Arrow key rotation sensitivity (turns per frame)
 	heading_arc_radius = 5,  -- Radius of the heading arc indicator
 	heading_arc_segments = 8,  -- Number of segments for the arc
 	armor = 0.8,  -- Armor rating (0-1): lower = takes more collision damage

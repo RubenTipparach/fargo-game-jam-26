@@ -1981,6 +1981,60 @@ function _update()
 		end
 	end
 
+	-- Mobile controls: Z button (button 4) to cycle through enemies
+	if btnp(4) then  -- Z button / button 4
+		-- Get list of valid targets (satellites and grabons that are not destroyed)
+		local valid_targets = {}
+		for _, enemy in ipairs(enemy_ships) do
+			if not enemy.is_destroyed and (enemy.type == "satellite" or enemy.type == "grabon") then
+				add(valid_targets, enemy)
+			end
+		end
+
+		if #valid_targets > 0 then
+			-- Find current target index
+			local current_index = 0
+			if current_selected_target then
+				for i, enemy in ipairs(valid_targets) do
+					if enemy.id == current_selected_target.id then
+						current_index = i
+						break
+					end
+				end
+			end
+
+			-- Cycle to next target
+			local next_index = (current_index % #valid_targets) + 1
+			current_selected_target = valid_targets[next_index]
+			camera_locked_to_target = true
+			camera_pitch_before_targeting = camera.rx  -- Save current pitch
+			printh("BUTTON 4 (Z): Cycled to target " .. current_selected_target.id)
+		end
+	end
+
+	-- Mobile controls: Arrow keys (buttons 0/1) to rotate ship
+	--if not Config.debug_lighting then  -- Only when not in debug mode
+	if btn(1) then  -- Left arrow / button 0
+		-- Rotate left: rotate the current heading left
+		local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
+		local new_angle = current_angle - Config.ship.arrow_key_rotation_speed  -- Rotate counter-clockwise
+		target_heading_dir = {
+			x = cos(new_angle),
+			z = sin(new_angle)
+		}
+	end
+
+	if btn(0) then  -- Right arrow / button 1
+		-- Rotate right: rotate the current heading right
+		local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
+		local new_angle = current_angle + Config.ship.arrow_key_rotation_speed  -- Rotate clockwise
+		target_heading_dir = {
+			x = cos(new_angle),
+			z = sin(new_angle)
+		}
+	end
+	--end
+
 	-- WASD controls for light rotation (only when debug_lighting is enabled)
 	if Config.debug_lighting then
 		local light_rotation_speed = Config.lighting.rotation_speed
@@ -2002,7 +2056,7 @@ function _update()
 	end
 
 	-- X key to fire debug beam (VFX only, no damage logic)
-	if keyp("x") then
+	if Config.enable_x_button and keyp("x") then
 		printh("X KEY PRESSED - FIRING DEBUG BEAM!")
 
 		-- Fire beam to satellite or planet
@@ -2020,8 +2074,8 @@ function _update()
 		end
 	end
 
-	-- Debug smoke spawn (Z key)
-	if keyp("z") then
+	-- Debug smoke spawn (old Z key binding - now used for enemy cycling)
+	if false and keyp("z") then
 		printh("Z KEY PRESSED - SPAWNING DEBUG SMOKE!")
 		local target_pos = nil
 		if #enemy_ships > 0 and model_satellite then
