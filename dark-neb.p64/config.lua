@@ -223,6 +223,8 @@ Config.weapons = {
 		range = 80,  -- Maximum firing distance
 		arc_start = -60,  -- Left edge of firing arc (degrees)
 		arc_end = 30,  -- Right edge of firing arc (degrees)
+		-- Muzzle offset from ship center (world units)
+		muzzle_offset = {x = -2.0, y = 0.5, z = 3.0},  -- Left side, slightly forward
 	},
 	{
 		name = "Photon Beam B",
@@ -231,6 +233,8 @@ Config.weapons = {
 		range = 80,  -- Maximum firing distance
 		arc_start = -30,  -- Left edge of firing arc (degrees)
 		arc_end = 60,  -- Right edge of firing arc (degrees)
+		-- Muzzle offset from ship center (world units)
+		muzzle_offset = {x = 2.0, y = 0.5, z = 3.0},  -- Right side, slightly forward
 	},
 }
 
@@ -464,31 +468,35 @@ Config.missions = {
 				-- AI behavior
 				ai = {
 					-- Movement
-					speed = 0.3,  -- Allocated speed (0-1)
+					speed = 0.5,  -- Allocated speed (0-1)
 					max_speed = 1.0,
 					turn_rate = 0.001,  -- Slow rotation towards target
 					-- Combat
 					target_detection_range = 250,
-					attack_range = 120,
-					firing_arc_start = -45,  -- Weapon arc
-					firing_arc_end = 45,
+					attack_range = 70,
+					firing_arc_start = -90,  -- Weapon arc
+					firing_arc_end = 90,
 					-- Dual weapons (like player ship)
 					weapons = {
 						{
 							name = "Primary Cannon",
 							charge_time = 2.0,
-							fire_rate = 0.15,  -- Seconds between shots
-							range = 120,
-							damage = 20,
+							fire_rate = 3.0,  -- Seconds between shots
+							range = 70,
+							damage = 5,
 							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
 						},
 						{
 							name = "Secondary Cannon",
 							charge_time = 2.5,
-							fire_rate = 0.2,
-							range = 100,
-							damage = 15,
+							fire_rate = 3.0,
+							range = 70,
+							damage = 5,
 							last_fire_time = 0,
+							-- Muzzle offset from Grabon center (world units)
+							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
 						},
 					},
 				},

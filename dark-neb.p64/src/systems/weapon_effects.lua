@@ -242,11 +242,20 @@ end
 -- @param origin: {x, y, z} starting position
 -- @param target: {x, y, z} target position
 -- @return beam object
-function WeaponEffects.fire_beam(origin, target)
+function WeaponEffects.fire_beam(origin, target, sprite_id)
 	printh("FIRE_BEAM called: origin=(" .. origin.x .. "," .. origin.y .. "," .. origin.z .. ") target=(" .. target.x .. "," .. target.y .. "," .. target.z .. ")")
-	local beam = Beam.new(origin, target, BEAM_CONFIG)
+	local beam_config = {
+		sprite_id = sprite_id or BEAM_CONFIG.sprite_id,
+		width = BEAM_CONFIG.width,
+		lifetime = BEAM_CONFIG.lifetime,
+	}
+	local beam = Beam.new(origin, target, beam_config)
 	table.insert(beams, beam)
 	printh("Beam created, total beams: " .. #beams)
+
+	-- Play beam sound effect (SFX 1)
+	sfx(1)
+
 	return beam
 end
 
@@ -267,6 +276,9 @@ function WeaponEffects.spawn_explosion(pos, target)
 	})
 
 	table.insert(explosions, explosion)
+
+	-- Play explosion sound effect (SFX 2)
+	sfx(2)
 
 	-- Apply damage to target if it exists
 	if target and target.current_health and target.max_health then

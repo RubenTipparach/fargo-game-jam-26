@@ -928,19 +928,10 @@ function _init()
 		Config,
 		{
 			on_restart = function()
-				-- Reset game state
-				is_dead = false
-				current_health = Config.health.max_health
-				player_health_obj.current_health = current_health
-				death_time = 0
-				Config.ship.position = {x = 0, y = 0, z = 0}
-				ship_speed = 0
-				target_ship_speed = 0
-				particle_trails = {}
-				active_explosions = {}
-				ship_heading_dir = {x = 0, z = 1}
-				target_heading_dir = {x = 0, z = 1}
+				-- Return to menu without restarting
 				game_state = "menu"
+				is_dead = false
+				death_time = 0
 			end,
 			on_menu = function()
 				game_state = "menu"
@@ -1171,15 +1162,107 @@ function update_grabon_ai()
 					if enemy.heading >= 1 then enemy.heading = enemy.heading - 1 end
 				end
 
-				-- Move towards target based on allocated speed
-				if target_distance > ai.attack_range then
-					-- Move towards target
-					local move_amount = ai.speed * 0.5  -- Adjust speed scaling
-					enemy.position.x = enemy.position.x + (dx / target_distance) * move_amount
-					enemy.position.z = enemy.position.z + (dz / target_distance) * move_amount
-				end
+				-- Initialize velocity if needed
+			if not enemy.velocity then
+				enemy.velocity = {x = 0, z = 0}
+			end
 
-				-- Fire weapons if in range and in firing arc
+			-- Determine if Grabon should retreat (health below 40%)
+			local should_retreat = enemy.current_health < (enemy.max_health * 0.4)
+
+			-- Convert heading (0-1 turns) to direction vector
+			local forward_dir = {
+				x = sin(enemy.heading),  -- sin for x (left-right)
+				z = cos(enemy.heading)   -- cos for z (forward-back)
+			}
+
+			-- Determine desired acceleration direction based on AI state
+			local desired_accel = 0  -- Default: no acceleration
+			local max_speed = ai.speed * 0.1  -- Scale down max speed significantly
+
+			if should_retreat and target_distance < 200 then
+				-- Retreat away from player - accelerate backward
+				desired_accel = -0.05  -- Small acceleration value for backward
+			elseif target_distance > ai.attack_range then
+				-- Move towards target - accelerate forward
+				desired_accel = 0.05  -- Small acceleration value for forward
+			else
+				-- Within attack range - maintain current speed or decelerate slightly
+				desired_accel = 0
+			end
+
+			-- Check for obstacles and adjust acceleration if colliding
+			local collision_threshold = 5.0
+			local collision_detected = false
+
+			-- Check collision with player
+			if target_distance < collision_threshold then
+				collision_detected = true
+			end
+
+			-- Check collision with other enemies/satellites
+			for _, other_enemy in ipairs(enemy_ships) do
+				if other_enemy.id ~= enemy.id and other_enemy.position then
+					local odx = other_enemy.position.x - enemy.position.x
+					local odz = other_enemy.position.z - enemy.position.z
+					local other_distance = math.sqrt(odx*odx + odz*odz)
+					if other_distance < collision_threshold then
+						collision_detected = true
+						break
+					end
+				end
+			end
+
+			-- Check collision with spawned objects (asteroids, planets)
+			for _, obj in ipairs(spawned_spheres) do
+				if obj.x and obj.z then
+					local odx = obj.x - enemy.position.x
+					local odz = obj.z - enemy.position.z
+					local obj_distance = math.sqrt(odx*odx + odz*odz)
+					if obj_distance < collision_threshold then
+						collision_detected = true
+						break
+					end
+				end
+			end
+
+			-- If collision detected, reduce acceleration to avoid obstacle
+			if collision_detected then
+				-- Reduce desired acceleration by 50% to try to navigate around obstacles
+				desired_accel = desired_accel * 0.5
+			end
+
+			-- Apply acceleration to velocity (similar to player ship physics)
+			local accel_rate = 0.02  -- Acceleration rate per frame (slower acceleration)
+			local current_forward_speed = enemy.velocity.x * forward_dir.x + enemy.velocity.z * forward_dir.z
+			local new_forward_speed = current_forward_speed + desired_accel * accel_rate
+
+			-- Clamp speed to max_speed
+			if new_forward_speed > max_speed then
+				new_forward_speed = max_speed
+			elseif new_forward_speed < -max_speed * 0.5 then  -- Allow backward movement at half speed
+				new_forward_speed = -max_speed * 0.5
+			end
+
+			-- Apply friction when no acceleration (deceleration)
+			if desired_accel == 0 then
+				new_forward_speed = new_forward_speed * 0.95  -- Friction
+			end
+
+			-- Update current speed for movement (like player ship)
+			if not enemy.current_speed then enemy.current_speed = 0 end
+			if not enemy.target_speed then enemy.target_speed = new_forward_speed end
+			enemy.target_speed = new_forward_speed
+			enemy.current_speed = enemy.current_speed + (enemy.target_speed - enemy.current_speed) * 0.08
+
+			-- Apply movement only in the direction Grabon is facing
+			if abs(enemy.current_speed) > 0.01 then
+				local move_speed = enemy.current_speed * ai.speed * 0.1
+				enemy.position.x = enemy.position.x + forward_dir.x * move_speed
+				enemy.position.z = enemy.position.z + forward_dir.z * move_speed
+			end
+
+						-- Fire weapons if in range and in firing arc
 				if target_distance < ai.attack_range then
 					-- Calculate if target is in firing arc
 					local heading_to_target = atan2(dx, dz) / (2 * math.pi)
@@ -1205,22 +1288,59 @@ function update_grabon_ai()
 							end
 
 							-- Fire if enough time has passed
-							if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
-								-- Fire beam from Grabon towards player
-								WeaponEffects.fire_beam(enemy.position, ship_pos, weapon.damage or 10)
-								-- Track firing time
-								enemy.ai_last_weapon_fire_time[w] = current_time
+						if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
+							-- Fire beam from Grabon towards player
+							-- Calculate muzzle position using weapon offset
+							local muzzle_offset = weapon.muzzle_offset or {x = 0, y = 0, z = 0}
+							local muzzle_pos = {
+								x = enemy.position.x + muzzle_offset.x,
+								y = enemy.position.y + muzzle_offset.y,
+								z = enemy.position.z + muzzle_offset.z,
+							}
+							WeaponEffects.fire_beam(muzzle_pos, ship_pos, 12)  -- Sprite 12 for Grabon disruptor beams
+							-- Apply shield absorption first
+							local health_before = player_health_obj.current_health
+							local shield_absorbed = apply_shield_absorption()
+							if not shield_absorbed then
+								-- Shields didn't absorb, apply damage to health
+								WeaponEffects.spawn_explosion(ship_pos, player_health_obj)
+								-- Sync current_health with player_health_obj
+								current_health = player_health_obj.current_health
+								-- Check if player died
+								if current_health <= 0 then
+									is_dead = true
+									death_time = 0
+									-- Spawn explosion at ship position when player dies
+									if Config.explosion.enabled then
+										table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+										sfx(3)
+									end
+								end
+								-- Reset shield charge progress when hit without shields
+								for i = 1, 3 do
+									shield_charge.boxes[i] = 0
+								end
+								-- Spawn additional damage effects when player takes health damage
+								if player_health_obj.current_health < health_before then
+									WeaponEffects.spawn_smoke(ship_pos)
+								end
+							else
+								printh("Shield absorbed Grabon attack!")
 							end
+							-- Track firing time
+							enemy.ai_last_weapon_fire_time[w] = current_time
 						end
 					end
 				end
 			end
+		end
 		end
 	end
 end
 
 -- Apply shield absorption to damage before applying to health
 -- Shields absorb damage, and fully charged shields are consumed on hit
+-- Only FULLY charged shields (>= 1.0) can absorb damage
 function apply_shield_absorption()
 	-- Count how many fully charged shields we have available
 	local charged_shields = 0
@@ -1239,6 +1359,14 @@ function apply_shield_absorption()
 				printh("SHIELD ACTIVATED: Shield " .. i .. " absorbed damage!")
 				return true  -- Damage was absorbed
 			end
+		end
+	end
+
+	-- No fully charged shields available - player takes full damage
+	-- Also reset any partial shield charging progress
+	for i = 1, 3 do
+		if shield_charge.boxes[i] > 0 and shield_charge.boxes[i] < 1.0 then
+			shield_charge.boxes[i] = 0  -- Reset partial shields
 		end
 	end
 
@@ -2259,6 +2387,7 @@ function _update()
 		-- Spawn explosion at ship position
 		if Config.explosion.enabled then
 			table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
+			sfx(3)
 		end
 
 		end
@@ -2322,6 +2451,10 @@ function _update()
 					if not shield_absorbed then
 						-- Shields didn't absorb, apply damage to health
 						WeaponEffects.apply_collision_damage(player_health_obj)
+						-- Reset shield charge progress when hit without shields
+						for i = 1, 3 do
+							shield_charge.boxes[i] = 0
+						end
 					else
 						printh("Shield absorbed incoming damage!")
 					end
@@ -2329,6 +2462,11 @@ function _update()
 
 					-- Sync player health back from player_health_obj
 					current_health = player_health_obj.current_health
+					-- Check if player died from collision
+					if current_health <= 0 then
+						is_dead = true
+						death_time = 0
+					end
 
 					-- Mark this pair as colliding
 					collision_pairs[ship.id][enemy.id] = true
@@ -2434,6 +2572,9 @@ function _update()
 				Config.explosion
 			)
 			table.insert(active_explosions, explosion)
+
+			-- Play big explosion sound effect (SFX 3)
+			sfx(3)
 
 			-- If the destroyed enemy is the currently selected target, clear targeting
 			if current_selected_target and current_selected_target.id == enemy.id then
@@ -2595,6 +2736,9 @@ end
 
 function _draw()
 	cls(0)  -- Clear to dark blue
+
+	-- Get mouse position once for use throughout draw function
+	local mx, my, mb = mouse()
 
 	-- Draw stars first (before everything else)
 	draw_stars()
@@ -3076,9 +3220,9 @@ function _draw()
 		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
 	end
 
-	-- Draw 2D selection boxes for satellites
+	-- Draw 2D selection boxes for satellites and Grabon
 	for _, enemy in ipairs(enemy_ships) do
-		if enemy.type == "satellite" and model_satellite and enemy.position and not enemy.is_destroyed then
+		if (enemy.type == "satellite" and model_satellite or enemy.type == "grabon" and enemy.model) and enemy.position and not enemy.is_destroyed then
 			local sat_collider = enemy.config.collider
 			local sat_pos = enemy.position
 
@@ -3255,6 +3399,17 @@ function _draw()
 		end
 	end
 
+	-- Draw Grabon firing arc visualization when selected and firing arcs are enabled
+	if current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position and Config.show_firing_arcs then
+		local grabon_pos = current_selected_target.position
+		local grabon_ai = current_selected_target.config.ai
+		if grabon_ai then
+			-- Draw the firing arc for Grabon
+			local grabon_dir = {x = math.sin(current_selected_target.heading * 2 * math.pi), z = math.cos(current_selected_target.heading * 2 * math.pi)}
+			WeaponEffects.draw_firing_arc(grabon_pos, grabon_dir, grabon_ai.attack_range, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end, camera, draw_line_3d, 8)  -- Red color (8)
+		end
+	end
+
 	-- Draw minimap during gameplay (via UIRenderer)
 	if game_state == "playing" then
 		-- Check if satellite is in sensor range
@@ -3276,8 +3431,7 @@ function _draw()
 		death_time = death_time + (1 / 60)  -- Add one frame's worth of time
 
 		if death_time >= Config.health.death_screen_delay then
-			-- Get mouse position for button interaction
-			local mx, my, mb = mouse()
+			-- Check for mouse click
 			local mouse_clicked = (mb & 1) == 1
 
 			-- Update and draw death panel via UIRenderer
@@ -3291,8 +3445,7 @@ function _draw()
 	if is_out_of_bounds and game_state == "out_of_bounds" then
 		out_of_bounds_time = out_of_bounds_time + (1 / 60)
 
-		-- Get mouse position for button interaction
-		local mx, my, mb = mouse()
+		-- Check for mouse click
 		local mouse_clicked = (mb & 1) == 1
 
 		-- Calculate remaining time

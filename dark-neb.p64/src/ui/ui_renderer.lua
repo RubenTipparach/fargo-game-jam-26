@@ -69,7 +69,7 @@ function UIRenderer.init(modules, config, callbacks)
 			100,
 			180,
 			30,
-			"RESTART",
+			"MENU",
 			callbacks.on_restart or function() printh("restart_game") end
 		)
 	end

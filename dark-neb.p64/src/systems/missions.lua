@@ -889,10 +889,10 @@ function Missions.draw_dialog(text, mouse_x, mouse_y)
 	print(text, text_x + 1, text_y + 1, 1)
 	print(text, text_x, text_y, 7)
 
-	-- Draw current objective progress bar (if not success message)
+	-- Draw current objective progress bar (if not success message and not Mission 3)
 	if not is_success_message then
 		local mission = Missions.get_current_mission()
-		if mission and mission.objectives[next_objective_index] then
+		if mission and mission.objectives[next_objective_index] and mission.id ~= 3 then
 			local current_obj = mission.objectives[next_objective_index]
 
 			-- Progress bar for current objective
