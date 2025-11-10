@@ -142,7 +142,7 @@ local no_energy_message = {
 -- Shield charging state
 local shield_charge = {
 	boxes = {},  -- {1: charge_amount, 2: charge_amount, 3: charge_amount}
-	charge_time = 15.0,  -- 15 seconds per shield box
+	charge_time = Config.energy.systems.shields.charge_time,  -- From config
 }
 
 -- Initialize shield charges
@@ -1959,7 +1959,7 @@ function _update()
 			printh("DEBUG: current_selected_target IS SET after right-click")
 		elseif raycast_x and raycast_z then
 			-- Only set ship heading if we have a valid crosshair (raycast succeeded)
-			printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
+			-- printh("Raycast SUCCESS: world(" .. flr(raycast_x*10)/10 .. "," .. flr(raycast_z*10)/10 .. ")")
 
 			-- Calculate direction from ship to target point (normalized)
 			local ship_x = Config.ship.position.x
@@ -1975,8 +1975,8 @@ function _update()
 				rotation_progress = 0  -- Reset accumulator when target changes
 
 				-- Log heading directions and positions for debugging
-				printh("  Ship heading dir: (" .. flr(ship_heading_dir.x*1000)/1000 .. "," .. flr(ship_heading_dir.z*1000)/1000 .. ")")
-				printh("  Target heading dir: (" .. flr(target_heading_dir.x*1000)/1000 .. "," .. flr(target_heading_dir.z*1000)/1000 .. ")")
+				-- printh("  Ship heading dir: (" .. flr(ship_heading_dir.x*1000)/1000 .. "," .. flr(ship_heading_dir.z*1000)/1000 .. ")")
+				-- printh("  Target heading dir: (" .. flr(target_heading_dir.x*1000)/1000 .. "," .. flr(target_heading_dir.z*1000)/1000 .. ")")
 			end
 		end
 	end
@@ -2124,7 +2124,7 @@ function _update()
 	for i = 1, #Config.weapons do
 		local state = weapon_states[i]
 		if state.auto_fire and is_weapon_ready(i, current_selected_target) then
-			printh("FIRE CHECK: Weapon " .. i .. " is ready!")
+			-- printh("FIRE CHECK: Weapon " .. i .. " is ready!")
 			-- Fire the weapon
 			local target_pos = nil
 			local target_ref = nil
@@ -2156,10 +2156,11 @@ function _update()
 					-- Reset weapon charge after firing
 					state.charge = 0
 
-					printh("Auto-fire: Weapon " .. i .. " fired at target")
+					-- printh("Auto-fire: Weapon " .. i .. " fired at target")
 				else
 					-- Cannot fire - out of range or out of arc
-					printh("Auto-fire: Weapon " .. i .. " cannot fire: " .. (not in_range and "out of range" or "out of arc"))
+					local abc = ""
+					-- printh("Auto-fire: Weapon " .. i .. " cannot fire: " .. (not in_range and "out of range" or "out of arc"))
 				end
 			end
 		end
@@ -2287,15 +2288,9 @@ function _update()
 		-- Determine direction: positive or negative
 		local rotation_amount = angle_diff > 0 and Config.ship.turn_rate or -Config.ship.turn_rate
 
-		-- If we're very close, clamp to exact target to avoid overshoot
-		-- if abs(angle_diff) < abs(rotation_amount) then
-		-- 	rotation_amount = angle_diff
-		-- end
-
-
 		-- Apply rotation to current angle
 		local new_angle = current_angle + rotation_amount
-		
+
 		-- Convert back to direction vector
 		ship_heading_dir.x = cos(new_angle)
 		ship_heading_dir.z = sin(new_angle)
@@ -2660,50 +2655,51 @@ function _update()
 			Missions.update_subsystems_objective(Config.energy)
 			Missions.update_targeting_objective(current_selected_target)
 			-- Count destroyed enemies for combat objective
-			Missions.update_combat_objective(#destroyed_enemies)
+			local destroyed_count = 0
+			for _ in pairs(destroyed_enemies) do
+				destroyed_count = destroyed_count + 1
+			end
+			Missions.update_combat_objective(destroyed_count)
 		elseif current_mission.id == 3 then
 			-- Update mission 3 objectives
 			Missions.update_search_objective(current_selected_target)
-			-- Check if player took damage (engaged by Grabon)
-			local took_damage = current_health < player_health_obj.current_health
-			if took_damage then
-				Missions.update_engage_objective(1)  -- 1 = took damage
-				player_health_obj.current_health = current_health  -- Update tracker
+			-- Check if Grabon is destroyed (count destroyed enemies)
+			local destroyed_count = 0
+			for id in pairs(destroyed_enemies) do
+				destroyed_count = destroyed_count + 1
 			end
-			-- Check if Grabon is destroyed
-			local grabon_destroyed = false
-			for _, enemy in ipairs(enemy_ships) do
-				if enemy.type == "grabon" and enemy.is_destroyed then
-					grabon_destroyed = true
-					break
-				end
-			end
+			local grabon_destroyed = destroyed_count >= 1
 			Missions.update_destroy_objective(grabon_destroyed)
 		elseif current_mission.id == 4 then
 			-- Update mission 4 objectives
 			Missions.update_search_objective_m4(current_selected_target)
-			-- Check if player took damage (engaged by Grabons)
-			local took_damage = current_health < player_health_obj.current_health
-			if took_damage then
-				Missions.update_engage_objective_m4(1)  -- 1 = took damage
-				player_health_obj.current_health = current_health  -- Update tracker
+			-- Count destroyed Grabons (mission 4 has 2 total)
+			local destroyed_count = 0
+			for id in pairs(destroyed_enemies) do
+				destroyed_count = destroyed_count + 1
 			end
-			-- Count alive Grabons
-			local grabons_alive = 0
-			for _, enemy in ipairs(enemy_ships) do
-				if enemy.type == "grabon" and not enemy.is_destroyed then
-					grabons_alive = grabons_alive + 1
-				end
-			end
+			local grabons_alive = 2 - destroyed_count
 			Missions.update_destroy_objective_m4(grabons_alive)
 		end
 
 		-- Check if current mission is complete
 		if Missions.check_mission_complete() and not Missions.is_mission_complete() then
 			Missions.set_mission_complete()
+
+			-- Add delay before showing success screen for missions 2, 3, and 4
+			local current_mission_obj = Missions.get_current_mission()
+			if current_mission_obj and current_mission_obj.id == 2 then
+				mission_success_time = -5.0  -- 5 second delay for mission 2
+			elseif current_mission_obj and current_mission_obj.id == 3 then
+				mission_success_time = -3.0  -- 3 second delay for mission 3
+			elseif current_mission_obj and current_mission_obj.id == 4 then
+				mission_success_time = -3.0  -- 3 second delay for mission 4
+			else
+				mission_success_time = 0
+			end
+
 			-- Transition to mission success scene
 			game_state = "mission_success"
-			mission_success_time = 0
 		end
 	end
 
@@ -3548,6 +3544,15 @@ function _draw()
 
 	-- Mission success screen
 	if game_state == "mission_success" then
+		-- Update timer
+		mission_success_time = mission_success_time + (1/60)  -- Assuming 60fps
+
+		-- If we're still in the delay period for mission 2, just continue showing the game
+		if mission_success_time < 0 then
+			-- Don't show success screen yet, just return and keep rendering the game
+			return
+		end
+
 		cls(0)  -- Clear screen
 
 		-- Draw "Mission Success!!!" text in center
@@ -3570,6 +3575,33 @@ function _draw()
 				"peers and teachers alike.",
 				"",
 				"You have a bright future ahead of you.",
+			}
+		elseif current_mission.id == 3 then
+			narrative_lines = {
+				"",
+				"Outstanding, Captain!",
+				"",
+				"Your maiden voyage was a complete",
+				"success. You've proven yourself in",
+				"real combat against a hostile Grabon.",
+				"",
+				"Your crew looks to you with confidence.",
+				"This is only the beginning of your",
+				"journey among the stars.",
+			}
+		elseif current_mission.id == 4 then
+			narrative_lines = {
+				"",
+				"Incredible, Captain!",
+				"",
+				"You've successfully defeated",
+				"overwhelming odds!",
+				"",
+				"Two enemy Grabons destroyed against",
+				"a single ship. Your tactical prowess",
+				"is unmatched.",
+				"",
+				"Command will remember this victory.",
 			}
 		else
 			narrative_lines = {

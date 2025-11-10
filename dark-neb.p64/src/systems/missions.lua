@@ -132,13 +132,6 @@ local MISSION_3 = {
 			completed = false,
 		},
 		{
-			id = "engage",
-			name = "Engage the Grabon",
-			progress = 0,
-			target = 1.0,
-			completed = false,
-		},
-		{
 			id = "destroy",
 			name = "Destroy the Grabon",
 			progress = 0,
@@ -158,13 +151,6 @@ local MISSION_4 = {
 		{
 			id = "search",
 			name = "Search for the enemies",
-			progress = 0,
-			target = 1.0,
-			completed = false,
-		},
-		{
-			id = "engage",
-			name = "Engage the Grabons",
 			progress = 0,
 			target = 1.0,
 			completed = false,
@@ -247,6 +233,11 @@ end
 -- Get current mission
 function Missions.get_current_mission()
 	return MISSIONS[current_mission]
+end
+
+-- Get current mission ID (the internal numeric variable)
+function Missions.get_current_mission_id()
+	return current_mission
 end
 
 -- Get mission by ID
@@ -520,7 +511,7 @@ function Missions.update_destroy_objective(grabon_destroyed)
 	if current_mission ~= 3 then return end
 
 	local mission = MISSIONS[3]
-	local obj = mission.objectives[3]  -- Destroy objective
+	local obj = mission.objectives[2]  -- Destroy objective (now index 2 after removing engage)
 
 	-- Update destruction status
 	mission_3_grabon_destroyed = grabon_destroyed or false
@@ -574,18 +565,14 @@ function Missions.show_next_objective()
 				if i == 1 then
 					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nSearch and destroy."
 				elseif i == 2 then
-					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nLet the Grabon attack you.\nEvade and counterattack"
-				elseif i == 3 then
-					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDestroy the Grabon!\nMove into range,\nfire weapons to destroy it"
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nDestroy the Grabon!\nMove into range,\nfire weapons to destroy it"
 				end
 			elseif mission.id == 4 then
 				-- Mission 4 instructions
 				if i == 1 then
 					instruction_text = "OBJECTIVE 1: " .. obj.name .. "\nFind both Grabons!"
 				elseif i == 2 then
-					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nDraw their fire.\nEvade and counterattack"
-				elseif i == 3 then
-					instruction_text = "OBJECTIVE 3: " .. obj.name .. "\nDestroy both!\nManage both targets,\nfire and maneuver"
+					instruction_text = "OBJECTIVE 2: " .. obj.name .. "\nDestroy both!\nManage both targets,\nfire and maneuver"
 				end
 			else
 				instruction_text = "OBJECTIVE " .. i .. ": " .. obj.name
@@ -1127,7 +1114,7 @@ function Missions.update_destroy_objective_m4(grabons_alive)
 	if current_mission ~= 4 then return end
 
 	local mission = MISSIONS[4]
-	local obj = mission.objectives[3]  -- Destroy objective
+	local obj = mission.objectives[2]  -- Destroy objective (now index 2 after removing engage)
 
 	-- Update alive count
 	mission_4_grabons_alive = grabons_alive or 0

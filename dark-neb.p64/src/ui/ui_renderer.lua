@@ -117,7 +117,7 @@ function UIRenderer.draw_cpu_stats()
 	if ui_state.show_cpu then
 		local cpu = stat(1) * 100
 		local color = cpu > 80 and 8 or 7
-		-- print("cpu: " .. flr(cpu) .. "%", 380, 2, color)
+		print("cpu: " .. flr(cpu) .. "%", 380, 2, color)
 	end
 end
 

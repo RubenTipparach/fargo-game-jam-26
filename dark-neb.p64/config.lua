@@ -34,7 +34,7 @@ Config.stars = {
 -- Camera configuration
 Config.camera = {
 	distance = 30,
-	height = 3,  -- Camera elevation above ground (y position of focus point)
+	height = 6,  -- Camera elevation above ground (y position of focus point)
 	rx = 0.05,  -- Initial rotation X (0.25 = looking straight down)
 	ry = -0.36,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
@@ -246,7 +246,7 @@ Config.weapons = {
 	{
 		name = "Photon Beam B",
 		energy_cost = 4,  -- Minimum energy required to fire
-		charge_time = 3,  -- Time in seconds to charge
+		charge_time = 3.5,  -- Time in seconds to charge
 		range = 80,  -- Maximum firing distance
 		arc_start = -30,  -- Left edge of firing arc (degrees)
 		arc_end = 60,  -- Right edge of firing arc (degrees)
@@ -284,6 +284,7 @@ Config.energy = {
 			color_full = 12,  -- blue
 			color_empty = 0,
 			label_offset = 5,  -- X offset from last box to label text
+			charge_time = 15.0,  -- Seconds per shield box to fully charge
 		},
 		tractor_beam = {
 			capacity = 2,
