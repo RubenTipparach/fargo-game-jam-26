@@ -940,6 +940,9 @@ function _init()
 	-- Initialize menu with available missions
 	Menu.init(Config)
 
+	-- Build energy hitboxes for hover detection
+	build_energy_hitboxes()
+
 	-- Initialize UI renderer
 	UIRenderer.init(
 		{panel = Panel, button = Button, minimap = Minimap, menu = Menu},
@@ -1235,12 +1238,30 @@ function build_energy_hitboxes()
 end
 
 -- Draw energy bars for each system
-function draw_energy_bars()
+function draw_energy_bars(mouse_x, mouse_y)
 	local energy_cfg = Config.energy
 	local systems_list = {"weapons", "impulse", "shields", "tractor_beam", "sensors"}
 
 	-- Draw vertical total energy bar on the left
 	draw_total_energy_bar()
+
+	-- Check if mouse is hovering over any energy bar
+	local hovered_system = nil
+	local hovered_level = 0
+
+	-- Only check hover if mouse position is provided
+	if mouse_x and mouse_y then
+		for system_name, blocks in pairs(energy_block_hitboxes) do
+			for level, hitbox in ipairs(blocks) do
+				if mouse_x >= hitbox.x1 and mouse_x <= hitbox.x2 and mouse_y >= hitbox.y1 and mouse_y <= hitbox.y2 then
+					hovered_system = system_name
+					hovered_level = level
+					break
+				end
+			end
+			if hovered_system then break end
+		end
+	end
 
 	local display_index = 0  -- Track actual display position (skipping hidden systems)
 	for _, system_name in ipairs(systems_list) do
@@ -1273,8 +1294,12 @@ function draw_energy_bars()
 			-- Draw filled rectangle
 			rectfill(rect_x, rect_y, rect_x2, rect_y2, color)
 
-			-- Draw border (read from config)
-			rect(rect_x, rect_y, rect_x2, rect_y2, energy_cfg.box.border_color)
+			-- Check if this bar should have yellow outline (hovered or below hovered level)
+			local is_hovered = hovered_system == system_name and j <= hovered_level
+			local border_color = is_hovered and 10 or energy_cfg.box.border_color  -- 10 = yellow
+
+			-- Draw border (yellow if hovered, normal otherwise)
+			rect(rect_x, rect_y, rect_x2, rect_y2, border_color)
 		end
 
 		-- Draw system name label with label offset from config
@@ -2491,7 +2516,7 @@ function _update()
 				selected_weapon = nil
 				current_selected_target = nil
 
-				-- Clear camera targeting settings
+				-- Clear camera targeting settings (only unlock, don't move camera)
 				camera_locked_to_target = false
 				if camera_pitch_before_targeting then
 					-- Reset both camera pitch and target pitch to prevent smoothing jitter
@@ -2499,10 +2524,6 @@ function _update()
 					target_rx = camera_pitch_before_targeting
 					camera_pitch_before_targeting = nil
 				end
-
-				-- Reset camera position to ship to prevent jitter from smoothing
-				camera.x = Config.ship.position.x
-				camera.z = Config.ship.position.z
 			end
 		end
 	end
@@ -3067,7 +3088,7 @@ function _draw()
 	print(health_text, text_x, text_y, 7)
 
 	-- Draw energy bars
-	draw_energy_bars()
+	draw_energy_bars(mx, my)
 
 	-- Draw no energy feedback message
 	draw_no_energy_message()

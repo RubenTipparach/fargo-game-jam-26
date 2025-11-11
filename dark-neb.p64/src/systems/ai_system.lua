@@ -239,7 +239,7 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 				if not enemy.current_speed then enemy.current_speed = 0 end
 
 				-- Smoothly interpolate towards desired speed using ShipSystems
-				enemy.current_speed = ShipSystems.calculate_speed(enemy.current_speed, desired_speed, 0.08)
+				enemy.current_speed = ShipSystems.calculate_speed(enemy.current_speed, desired_speed, 1.0)
 
 				-- Apply movement in facing direction using ShipSystems
 				if abs(enemy.current_speed) > 0.01 then
