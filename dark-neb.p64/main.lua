@@ -34,6 +34,7 @@ ArcUI = include("src/ui/arc_ui.lua")
 WeaponsUI = include("src/ui/weapons_ui.lua")
 WeaponEffects = include("src/systems/weapon_effects.lua")
 Missions = include("src/systems/missions.lua")
+ShipSystems = include("src/systems/ship_systems.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -1272,7 +1273,7 @@ function update_grabon_ai()
 			end
 
 						-- Fire weapons if in range and in firing arc
-				if target_distance < ai.attack_range and not is_dead then
+				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.attack_range) and not is_dead then
 					-- Calculate if target is in firing arc
 					local heading_to_target = atan2(dx, dz) / (2 * math.pi)
 					if heading_to_target < 0 then heading_to_target = heading_to_target + 1 end
@@ -1835,7 +1836,7 @@ function _update()
 
 						if target_pos and target_ref then
 							-- Check if target is in range and in firing arc
-							local in_range = WeaponEffects.is_in_range(ship_pos, target_pos, weapon.range)
+							local in_range = ShipSystems.is_in_range(ship_pos, target_pos, weapon.range)
 							local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
 
 							if in_range and in_arc then
@@ -2197,7 +2198,7 @@ function _update()
 			if target_pos and target_ref and ship_pos then
 				-- Check if target is in range and in firing arc
 				local weapon = Config.weapons[i]
-				local in_range = WeaponEffects.is_in_range(ship_pos, target_pos, weapon.range)
+				local in_range = ShipSystems.is_in_range(ship_pos, target_pos, weapon.range)
 				local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
 
 				if in_range and in_arc then

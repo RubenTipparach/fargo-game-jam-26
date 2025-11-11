@@ -719,18 +719,6 @@ end
 -- @param target_pos: {x, y, z} target position
 -- @param range: maximum firing distance
 -- @return: true if target is in range
-function WeaponEffects.is_in_range(ship_pos, target_pos, range)
-	if not ship_pos or not target_pos or not range then
-		return false
-	end
-
-	local dx = target_pos.x - ship_pos.x
-	local dz = target_pos.z - ship_pos.z
-	local distance_sq = dx * dx + dz * dz
-	local range_sq = range * range
-
-	return distance_sq <= range_sq
-end
 
 -- Check if a target is within weapon firing arc
 -- Simplified 2D dot product test in X,Z space
