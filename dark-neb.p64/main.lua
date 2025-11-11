@@ -548,6 +548,12 @@ local function dir_to_angle(dir)
 	return atan2(dir.x, dir.z)
 end
 
+-- Convert angle (in turns, 0-1 range) to direction vector
+-- Inverse of dir_to_angle
+local function angle_to_dir(angle)
+	return {x = cos(angle), z = sin(angle)}
+end
+
 -- Calculate angle difference between two directions (in turns, 0-1 range)
 -- Returns the shortest angular distance between two directions
 local function angle_difference(dir1, dir2)
@@ -1130,13 +1136,8 @@ function update_grabon_ai()
 
 			-- Detect player target
 			if not enemy.ai_target_detected then
-				-- Calculate distance to player
-				local dx = ship_pos.x - enemy.position.x
-				local dz = ship_pos.z - enemy.position.z
-				local distance = math.sqrt(dx*dx + dz*dz)
-
 				-- Detect if player within sensor range
-				if distance < ai.target_detection_range then
+				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.target_detection_range) then
 					enemy.ai_target_detected = true
 					enemy.ai_target = ship_pos
 				end
@@ -1181,10 +1182,7 @@ function update_grabon_ai()
 			local should_retreat = enemy.current_health < (enemy.max_health * 0.4)
 
 			-- Convert heading (0-1 turns) to direction vector
-			local forward_dir = {
-				x = sin(enemy.heading),  -- sin for x (left-right)
-				z = cos(enemy.heading)   -- cos for z (forward-back)
-			}
+			local forward_dir = angle_to_dir(enemy.heading)
 
 			-- Determine desired acceleration direction based on AI state
 			local desired_accel = 0  -- Default: no acceleration
@@ -2850,6 +2848,18 @@ function _draw()
 	-- Get mouse position once for use throughout draw function
 	local mx, my, mb = mouse()
 
+	-- Handle +/- keys for camera zoom
+	if keyp("=") or keyp("+") then
+		-- Zoom in (decrease camera distance)
+		camera.distance = camera.distance - 2
+		camera.distance = max(Config.camera.min_distance, camera.distance)  -- Clamp minimum
+	end
+	if keyp("-") or keyp("_") then
+		-- Zoom out (increase camera distance)
+		camera.distance = camera.distance + 2
+		camera.distance = min(Config.camera.max_distance, camera.distance)  -- Clamp maximum
+	end
+
 	-- ========================================
 	-- BACKGROUND (Draw first)
 	-- ========================================
@@ -2957,6 +2967,9 @@ function _draw()
 	for _, enemy in ipairs(enemy_ships) do
 		if enemy.type == "grabon" and enemy.model and enemy.position and not enemy.is_destroyed then
 			local grabon_pos = enemy.position
+			-- The renderer expects yaw in turns (0-1), with model alignment offset
+			local grabon_yaw = enemy.heading + 0.25  -- 90° offset for model alignment
+
 			local grabon_faces = RendererLit.render_mesh(
 				enemy.model.verts, enemy.model.faces, camera,
 				grabon_pos.x, grabon_pos.y, grabon_pos.z,
@@ -2966,7 +2979,7 @@ function _draw()
 				light_brightness,  -- light brightness
 				ambient,  -- ambient light
 				false,  -- is_ground
-				0, enemy.heading, 0,  -- pitch, yaw (heading), roll
+				0, grabon_yaw, 0,  -- pitch, yaw (heading + model offset), roll
 				Config.camera.render_distance
 			)
 
@@ -3343,7 +3356,7 @@ function _draw()
 		local grabon_ai = current_selected_target.config.ai
 		if grabon_ai then
 			-- Draw the firing arc for Grabon
-			local grabon_dir = {x = sin(current_selected_target.heading), z = cos(current_selected_target.heading)}
+			local grabon_dir = angle_to_dir(current_selected_target.heading)
 
 			-- Check if player is in range and in firing arc (green if valid, red otherwise)
 			local in_range = ShipSystems.is_in_range(grabon_pos, ship_pos, grabon_ai.attack_range)
@@ -3367,10 +3380,12 @@ function _draw()
 		draw_box_wireframe(ship_box_min_x, ship_box_min_y, ship_box_min_z,
 		                   ship_box_max_x, ship_box_max_y, ship_box_max_z, camera, 3)  -- Cyan box
 
-		-- Draw planet collider wireframe using DebugRenderer
-		local planet_collider = Config.planet.collider
-		local planet_pos = Config.planet.position
-		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+		-- Draw planet collider wireframe using DebugRenderer (only if planet is active in mission)
+		if show_planet then
+			local planet_collider = Config.planet.collider
+			local planet_pos = Config.planet.position
+			DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+		end
 
 		-- Draw bounding boxes for all spawned spheres
 		for _, sphere_pos in ipairs(spawned_spheres) do
@@ -3383,6 +3398,18 @@ function _draw()
 			local quad_max_z = sphere_pos.z + s
 			draw_box_wireframe(quad_min_x, quad_min_y, quad_min_z,
 			                   quad_max_x, quad_max_y, quad_max_z, camera, 8)  -- Red box
+		end
+
+		-- Draw enemy ship heading arrows
+		for _, enemy in ipairs(enemy_ships) do
+			if enemy.type == "grabon" and enemy.position and not enemy.is_destroyed then
+				local arrow_length = 15
+				local grabon_dir = angle_to_dir(enemy.heading)
+				local arrow_end_x = enemy.position.x + grabon_dir.x * arrow_length
+				local arrow_end_z = enemy.position.z + grabon_dir.z * arrow_length
+				draw_line_3d(enemy.position.x, enemy.position.y, enemy.position.z,
+				             arrow_end_x, enemy.position.y, arrow_end_z, camera, 10)  -- Yellow arrow
+			end
 		end
 	end
 

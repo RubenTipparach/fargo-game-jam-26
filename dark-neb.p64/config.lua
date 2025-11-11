@@ -7,7 +7,7 @@ local Config = {}
 Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = false  -- Always show CPU stats
-Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
+Config.debug_physics = true  -- Show physics bounding boxes and collision wireframes
 Config.enable_x_button = false  -- Enable X button input (disabled for now)
 Config.show_firing_arcs = false  -- Always show firing arc visualization
 
@@ -34,6 +34,8 @@ Config.stars = {
 -- Camera configuration
 Config.camera = {
 	distance = 30,
+	min_distance = 25,  -- Minimum zoom distance
+	max_distance = 100,  -- Maximum zoom distance
 	height = 6,  -- Camera elevation above ground (y position of focus point)
 	rx = 0.05,  -- Initial rotation X (0.25 = looking straight down)
 	ry = -0.36,  -- Initial rotation Y
@@ -353,14 +355,14 @@ Config.mission_ui = {
 	panel_height = 225,  -- Total height of unified panel
 
 	-- Dialog panel (objectives and mission info)
-	dialog_panel_x = 180,  -- Top-left corner
-	dialog_panel_y = 10,
+	dialog_panel_x = 30,  -- Top-left corner
+	dialog_panel_y = 115,
 	dialog_panel_width = 200,  -- Width of dialog panel
 	dialog_panel_height = 80,  -- Height of dialog panel
 
 	-- Dialog toggle button ("H" for hide/show)
-	dialog_toggle_x_offset = -16,  -- Offset from dialog_panel_x (right edge of panel)
-	dialog_toggle_y_offset = 0,  -- Offset from dialog_panel_y
+	dialog_toggle_x_offset = -20,  -- Offset from dialog_panel_x (right edge of panel)
+	dialog_toggle_y_offset = 10,  -- Offset from dialog_panel_y
 	dialog_toggle_size = 12,  -- Size of the toggle button
 
 	-- Mission objective section

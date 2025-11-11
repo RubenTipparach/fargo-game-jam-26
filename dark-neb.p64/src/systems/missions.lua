@@ -797,7 +797,7 @@ function Missions.draw_help_panel(mouse_x, mouse_y, config)
 	rect(toggle_x, toggle_y, toggle_x + toggle_size, toggle_y + toggle_size, 7)
 
 	-- Draw toggle text ("H" for hide/show)
-	print("H", toggle_x + 4, toggle_y + 3, toggle_hovered and 11 or 0)
+	print("M", toggle_x + 4, toggle_y + 3, toggle_hovered and 11 or 0)
 
 	-- Only draw dialog when it's visible (instruction text or mission success message)
 	if dialog_visible and show_objective_panel then
