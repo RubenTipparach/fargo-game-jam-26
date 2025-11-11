@@ -1,9 +1,9 @@
 --[[pod_format="raw",created="2025-11-10 00:00:00",modified="2025-11-10 00:00:00",revision=1]]
--- Player Ship Systems Module
+-- Ship Systems Module
 -- Encapsulates firing arc validation, rotation control, and speed management
 -- Mirrors the exact implementations from main.lua and weapon_effects.lua
 
-local PlayerShipSystems = {}
+local ShipSystems = {}
 
 -- ============================================
 -- FIRING ARC SYSTEM
@@ -14,7 +14,7 @@ local PlayerShipSystems = {}
 -- @param target_pos: {x, y, z} target position
 -- @param range: maximum firing distance
 -- @return: true if target is in range
-function PlayerShipSystems.is_in_range(ship_pos, target_pos, range)
+function ShipSystems.is_in_range(ship_pos, target_pos, range)
 	if not ship_pos or not target_pos or not range then
 		return false
 	end
@@ -35,7 +35,7 @@ end
 -- @param arc_start: left edge of arc in degrees (negative = left)
 -- @param arc_end: right edge of arc in degrees (positive = right)
 -- @return: true if target is within firing arc
-function PlayerShipSystems.is_in_firing_arc(ship_pos, ship_heading, target_pos, arc_start, arc_end)
+function ShipSystems.is_in_firing_arc(ship_pos, ship_heading, target_pos, arc_start, arc_end)
 	if not ship_pos or not target_pos or not ship_heading then
 		return false
 	end
@@ -97,7 +97,7 @@ end
 -- @param target_heading_dir: {x, z} target direction vector
 -- @param turn_rate: turn rate (positive value in turns, e.g., 0.01 for 1% rotation per frame)
 -- @return: {x, z} new heading direction after rotation step
-function PlayerShipSystems.calculate_rotation(current_heading_dir, target_heading_dir, turn_rate)
+function ShipSystems.calculate_rotation(current_heading_dir, target_heading_dir, turn_rate)
 	if not current_heading_dir or not target_heading_dir or not turn_rate then
 		return {x = current_heading_dir.x, z = current_heading_dir.z}
 	end
@@ -149,7 +149,7 @@ end
 -- @param target_speed: target ship speed
 -- @param speed_smoothing: smoothing factor (e.g., Config.ship.speed_smoothing = 0.08)
 -- @return: float new ship speed after interpolation
-function PlayerShipSystems.calculate_speed(current_speed, target_speed, speed_smoothing)
+function ShipSystems.calculate_speed(current_speed, target_speed, speed_smoothing)
 	if not current_speed or not target_speed or not speed_smoothing then
 		return current_speed or 0
 	end
@@ -164,7 +164,7 @@ end
 -- @param ship_heading_dir: {x, z} ship heading direction (unit vector)
 -- @param max_speed: maximum speed constant (e.g., Config.ship.max_speed)
 -- @return: {x, z} movement offset for this frame
-function PlayerShipSystems.calculate_movement(ship_speed, ship_heading_dir, max_speed)
+function ShipSystems.calculate_movement(ship_speed, ship_heading_dir, max_speed)
 	if not ship_speed or not ship_heading_dir or not max_speed then
 		return {x = 0, z = 0}
 	end
@@ -177,4 +177,4 @@ function PlayerShipSystems.calculate_movement(ship_speed, ship_heading_dir, max_
 	}
 end
 
-return PlayerShipSystems
+return ShipSystems
