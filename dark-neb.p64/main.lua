@@ -1444,11 +1444,14 @@ function _update()
 		local input = {
 			select = keyp("return") or keyp("z"),
 		}
-		-- Block menu clicks for one frame after returning from mission
-		local mouse_click = ((mb & 1) == 1) and not skip_next_menu_click
+		-- Block menu clicks until mouse button is released after returning from mission
 		if skip_next_menu_click then
-			skip_next_menu_click = false  -- Reset flag for next frame
+			-- Keep blocking until mouse is released
+			if (mb & 1) == 0 then
+				skip_next_menu_click = false  -- Mouse released, allow clicks again
+			end
 		end
+		local mouse_click = ((mb & 1) == 1) and not skip_next_menu_click
 
 		if Menu.update(input, mx, my, mouse_click) then
 			-- Campaign selected, start game
@@ -3273,6 +3276,10 @@ function _draw()
 		if ok_clicked then
 			game_state = "menu"
 			mission_success_time = 0
+			-- Reset missions to allow reselecting from menu
+			Missions.init(Config)
+			-- Prevent clicking mission buttons while mouse is held
+			skip_next_menu_click = true
 		end
 	end
 
