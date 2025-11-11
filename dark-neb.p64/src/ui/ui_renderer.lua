@@ -35,9 +35,6 @@ local ui_state = {
 
 	-- Debug display
 	debug_ui = false,
-
-	-- CPU display
-	show_cpu = true,
 }
 
 -- Initialize UI renderer with component modules
@@ -113,8 +110,9 @@ function UIRenderer.update(mouse_x, mouse_y, mouse_clicked, game_state, is_dead)
 end
 
 -- Draw CPU usage display
-function UIRenderer.draw_cpu_stats()
-	if ui_state.show_cpu then
+-- @param Config: game configuration (checks Config.show_cpu flag)
+function UIRenderer.draw_cpu_stats(Config)
+	if Config and Config.show_cpu then
 		local cpu = stat(1) * 100
 		local color = cpu > 80 and 8 or 7
 		print("cpu: " .. flr(cpu) .. "%", 380, 2, color)

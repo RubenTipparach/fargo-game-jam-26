@@ -18,6 +18,9 @@ local AI_STATE = {
 local AI_PLANNING_INTERVAL_MIN = 3.0
 local AI_PLANNING_INTERVAL_MAX = 5.0
 
+-- AI distance constants
+local AI_MIN_DISTANCE = 20  -- Minimum safe distance from player (triggers EVADE)
+
 -- Determine AI state based on conditions
 -- @param enemy: enemy ship data
 -- @param target_distance: distance to player
@@ -32,17 +35,22 @@ local function determine_ai_state(enemy, target_distance, collision_detected, ai
 		return AI_STATE.EVADE
 	end
 
-	-- Priority 2: Retreat if low health
+	-- Priority 2: Evade if too close to player (minimum safe distance)
+	if target_distance < AI_MIN_DISTANCE then
+		return AI_STATE.EVADE
+	end
+
+	-- Priority 3: Retreat if low health
 	if health_percent < 0.2 then
 		return AI_STATE.RETREAT
 	end
 
-	-- Priority 3: Close distance if too far
+	-- Priority 4: Close distance if too far
 	if target_distance > ai.attack_range then
 		return AI_STATE.CLOSE_DISTANCE
 	end
 
-	-- Priority 4: Maintain attack distance
+	-- Priority 5: Maintain attack distance
 	if target_distance < ai.attack_range * 0.5 then
 		return AI_STATE.MAINTAIN_DISTANCE
 	end
@@ -51,23 +59,24 @@ local function determine_ai_state(enemy, target_distance, collision_detected, ai
 	return AI_STATE.ATTACK
 end
 
--- Calculate desired direction based on AI state
+-- Calculate desired heading direction based on AI state
+-- Ships move in the direction they face, so this determines both heading and movement
 -- @param state: current AI state
 -- @param enemy_pos: enemy position
 -- @param player_pos: player position
 -- @param collision_obstacle: nearest obstacle position (if any)
--- @return: desired direction vector {x, z}
-local function calculate_desired_direction(state, enemy_pos, player_pos, collision_obstacle)
+-- @return: desired heading direction vector {x, z}
+local function calculate_desired_heading(state, enemy_pos, player_pos, collision_obstacle)
 	local dx = player_pos.x - enemy_pos.x
 	local dz = player_pos.z - enemy_pos.z
 	local dist = math.sqrt(dx*dx + dz*dz)
 
 	if state == AI_STATE.RETREAT then
-		-- Move away from player
+		-- Face and move away from player
 		return {x = -dx / dist, z = -dz / dist}
 
 	elseif state == AI_STATE.EVADE then
-		-- Move perpendicular to obstacle direction
+		-- If there's a collision obstacle, face perpendicular to it
 		if collision_obstacle then
 			local odx = collision_obstacle.x - enemy_pos.x
 			local odz = collision_obstacle.z - enemy_pos.z
@@ -75,22 +84,21 @@ local function calculate_desired_direction(state, enemy_pos, player_pos, collisi
 			-- Perpendicular vector (rotate 90 degrees)
 			return {x = -odz / odist, z = odx / odist}
 		else
-			-- If no specific obstacle, move away from player
+			-- No collision obstacle, evading because too close to player - face away
 			return {x = -dx / dist, z = -dz / dist}
 		end
 
 	elseif state == AI_STATE.CLOSE_DISTANCE then
-		-- Move towards player
+		-- Face and move towards player
 		return {x = dx / dist, z = dz / dist}
 
 	elseif state == AI_STATE.MAINTAIN_DISTANCE then
-		-- Move away from player to maintain optimal range
+		-- Face and move away from player to maintain optimal range
 		return {x = -dx / dist, z = -dz / dist}
 
 	elseif state == AI_STATE.ATTACK then
-		-- Circle around player (strafe)
-		-- Perpendicular to player direction
-		return {x = -dz / dist, z = dx / dist}
+		-- Face player to keep weapons on target
+		return {x = dx / dist, z = dz / dist}
 	end
 
 	-- Default: towards player
@@ -102,7 +110,7 @@ end
 -- @param ai: AI configuration
 -- @return: desired speed (0-1 normalized)
 local function calculate_desired_speed(state, ai)
-	local max_speed = ai.speed * 0.1  -- Scale down max speed
+	local max_speed = ai.speed  -- Use configured speed directly
 
 	if state == AI_STATE.RETREAT then
 		return max_speed * 1.0  -- Full speed retreat
@@ -117,7 +125,7 @@ local function calculate_desired_speed(state, ai)
 		return max_speed * 0.3  -- Slow back away
 
 	elseif state == AI_STATE.ATTACK then
-		return max_speed * 0.5  -- Moderate strafe speed
+		return max_speed * 0.7  -- Moderate strafe speed
 	end
 
 	return 0  -- Idle
@@ -194,7 +202,7 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 					enemy.ai_last_planning_time = 0
 					enemy.ai_planning_interval = AI_PLANNING_INTERVAL_MIN + rnd(AI_PLANNING_INTERVAL_MAX - AI_PLANNING_INTERVAL_MIN)
 					enemy.ai_current_state = AI_STATE.IDLE
-					enemy.ai_desired_dir = {x = 0, z = 1}
+					enemy.ai_desired_heading = {x = 0, z = 1}
 					enemy.ai_desired_speed = 0
 				end
 
@@ -206,15 +214,15 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 					-- Update AI state based on conditions (collision overrides interval)
 					local ai_state = determine_ai_state(enemy, target_distance, collision_detected, ai)
 
-					-- Calculate desired direction based on state
-					local desired_dir = calculate_desired_direction(ai_state, enemy.position, ship_pos, nearest_obstacle)
+					-- Calculate desired heading direction based on state (ships move where they face)
+					local desired_heading = calculate_desired_heading(ai_state, enemy.position, ship_pos, nearest_obstacle)
 
 					-- Calculate desired speed based on state
 					local desired_speed = calculate_desired_speed(ai_state, ai)
 
 					-- Store planning results
 					enemy.ai_current_state = ai_state
-					enemy.ai_desired_dir = desired_dir
+					enemy.ai_desired_heading = desired_heading
 					enemy.ai_desired_speed = desired_speed
 
 					-- Reset planning timer with new random interval
@@ -223,14 +231,14 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 				end
 
 				-- Use cached planning results
-				local desired_dir = enemy.ai_desired_dir
+				local desired_heading = enemy.ai_desired_heading
 				local desired_speed = enemy.ai_desired_speed
 
 				-- Convert current heading to direction vector
 				local current_dir = angle_to_dir(enemy.heading)
 
-				-- Smoothly rotate towards desired direction using ShipSystems
-				local new_dir = ShipSystems.calculate_rotation(current_dir, desired_dir, ai.turn_rate)
+				-- Smoothly rotate towards desired heading using ShipSystems
+				local new_dir = ShipSystems.calculate_rotation(current_dir, desired_heading, ai.turn_rate)
 
 				-- Convert back to heading (0-1 turns)
 				enemy.heading = atan2(new_dir.x, new_dir.z)
@@ -241,7 +249,7 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 				-- Smoothly interpolate towards desired speed using ShipSystems
 				enemy.current_speed = ShipSystems.calculate_speed(enemy.current_speed, desired_speed, 1.0)
 
-				-- Apply movement in facing direction using ShipSystems
+				-- Apply movement in HEADING direction (ships move where they face)
 				if abs(enemy.current_speed) > 0.01 then
 					local movement = ShipSystems.calculate_movement(enemy.current_speed, new_dir, ai.speed)
 					enemy.position.x = enemy.position.x + movement.x
@@ -251,13 +259,17 @@ function AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health
 				-- Use facing direction for weapon firing
 				local forward_dir = new_dir
 
-				-- Fire weapons if in range and in firing arc
-				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.attack_range) and not is_dead then
-					-- Check if in firing arc
-					if ShipSystems.is_in_firing_arc(enemy.position, forward_dir, ship_pos, ai.firing_arc_start, ai.firing_arc_end) then
-						-- Fire weapons on interval
-						for w = 1, #ai.weapons do
-							local weapon = ai.weapons[w]
+				-- Fire weapons if in range - check per-weapon firing arc
+				if not is_dead then
+					-- Check each weapon individually
+					for w = 1, #ai.weapons do
+						local weapon = ai.weapons[w]
+
+						-- Check if target is in range and in THIS weapon's firing arc
+						local in_range = ShipSystems.is_in_range(enemy.position, ship_pos, weapon.range)
+						local in_arc = ShipSystems.is_in_firing_arc(enemy.position, forward_dir, ship_pos, weapon.firing_arc_start, weapon.firing_arc_end)
+
+						if in_range and in_arc then
 							local current_time = t()  -- Get current elapsed time (Picotron API)
 
 							if not enemy.ai_last_weapon_fire_time then

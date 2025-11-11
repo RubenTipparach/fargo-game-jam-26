@@ -10,6 +10,7 @@ Config.show_cpu = false  -- Always show CPU stats
 Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
 Config.enable_x_button = false  -- Enable X button input (disabled for now)
 Config.show_firing_arcs = false  -- Always show firing arc visualization
+Config.debug_ai = true  -- Show AI state next to enemy selection boxes
 
 -- Star configuration
 Config.stars = {
@@ -494,14 +495,12 @@ Config.missions = {
 				-- AI behavior
 				ai = {
 					-- Movement
-					speed = 0.5,  -- Allocated speed (0-1)
-					max_speed = 1.0,
-					turn_rate = 0.001,  -- Slow rotation towards target
+					speed = 0.7,  -- Allocated speed (0-1)
+					max_speed = 1.0,  -- NOT USED - kept for reference only
+					turn_rate = 0.0001,  -- Slow rotation towards target
 					-- Combat
 					target_detection_range = 250,
 					attack_range = 70,
-					firing_arc_start = -90,  -- Weapon arc
-					firing_arc_end = 90,
 					-- Dual weapons (like player ship)
 					weapons = {
 						{
@@ -513,16 +512,22 @@ Config.missions = {
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = -45,  -- Left weapon arc
+							firing_arc_end = 30,
 						},
 						{
 							name = "Secondary Cannon",
 							charge_time = 2.5,
-							fire_rate = 3.0,
+							fire_rate = 5.0,
 							range = 80,
 							damage = 5,
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = 0,  -- Right weapon arc
+							firing_arc_end = 90,
 						},
 					},
 				},
@@ -565,14 +570,12 @@ Config.missions = {
 				-- AI behavior
 				ai = {
 					-- Movement
-					speed = 0.5,  -- Allocated speed (0-1)
-					max_speed = 1.0,
-					turn_rate = 0.001,  -- Slow rotation towards target
+					speed = 0.8,  -- Allocated speed (0-1)
+					max_speed = 1.0,  -- NOT USED - kept for reference only
+					turn_rate = 0.0001,  -- Slow rotation towards target
 					-- Combat
 					target_detection_range = 250,
 					attack_range = 80,
-					firing_arc_start = -90,  -- Weapon arc
-					firing_arc_end = 90,
 					-- Dual weapons (like player ship)
 					weapons = {
 						{
@@ -584,6 +587,9 @@ Config.missions = {
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = -60,  -- Left weapon arc
+							firing_arc_end = 60,
 						},
 						{
 							name = "Secondary Cannon",
@@ -594,6 +600,9 @@ Config.missions = {
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = 140,  -- Right weapon arc
+							firing_arc_end = 220,
 						},
 					},
 				},
@@ -618,14 +627,12 @@ Config.missions = {
 				-- AI behavior
 				ai = {
 					-- Movement
-					speed = 0.5,  -- Allocated speed (0-1)
-					max_speed = 1.0,
-					turn_rate = 0.001,  -- Slow rotation towards target
+					speed = 0.8,  -- Allocated speed (0-1)
+					max_speed = 1.0,  -- NOT USED - kept for reference only
+					turn_rate = 0.0001,  -- Slow rotation towards target
 					-- Combat
 					target_detection_range = 250,
 					attack_range = 70,
-					firing_arc_start = -90,  -- Weapon arc
-					firing_arc_end = 90,
 					-- Dual weapons (like player ship)
 					weapons = {
 						{
@@ -637,6 +644,9 @@ Config.missions = {
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = -1.5, y = 0.3, z = 4.0},  -- Left side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = -60,  -- Left weapon arc
+							firing_arc_end = 60,
 						},
 						{
 							name = "Secondary Cannon",
@@ -647,6 +657,9 @@ Config.missions = {
 							last_fire_time = 0,
 							-- Muzzle offset from Grabon center (world units)
 							muzzle_offset = {x = 1.5, y = 0.3, z = 4.0},  -- Right side, forward
+							-- Weapon-specific firing arc
+							firing_arc_start = 140,  -- Right weapon arc
+							firing_arc_end = 220,
 						},
 					},
 				},

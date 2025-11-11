@@ -1563,8 +1563,8 @@ function _update()
 		for _, enemy in ipairs(enemy_ships) do
 			WeaponEffects.register_smoke_spawner(
 				enemy,
-				0.5,  -- Spawn smoke when below 30% health
-				function() return {x = enemy.position.x, y = enemy.position.y, z = enemy.position.z} end
+				0.5,  -- Spawn smoke when below 50% health
+				function() return enemy.position end  -- Return position reference, not a copy
 			)
 		end
 		return  -- Skip gameplay updates while in menu
@@ -3050,7 +3050,7 @@ function _draw()
 	end
 
 	-- Draw 2D selection boxes for satellites and Grabon
-	ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target, hovered_target, ship_pos, camera, project_point)
+	ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target, hovered_target, ship_pos, camera, project_point, Config)
 
 	-- Draw health bar at top left
 	local health_config = Config.health
@@ -3289,7 +3289,7 @@ function _draw()
 	-- ========================================
 
 	-- CPU usage (drawn via UIRenderer)
-	UIRenderer.draw_cpu_stats()
+	UIRenderer.draw_cpu_stats(Config)
 	
 	-- Debug weapons UI hitboxes
 	if (Config.debug) then

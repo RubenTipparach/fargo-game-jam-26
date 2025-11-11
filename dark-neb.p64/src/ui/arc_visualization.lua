@@ -32,16 +32,20 @@ function ArcVisualization.draw_all_arcs(ship_heading_dir, target_heading_dir, cu
 	if current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position and config.show_firing_arcs then
 		local grabon_pos = current_selected_target.position
 		local grabon_ai = current_selected_target.config.ai
-		if grabon_ai then
-			-- Draw the firing arc for Grabon
+		if grabon_ai and grabon_ai.weapons then
+			-- Draw firing arc for each weapon
 			local grabon_dir = angle_to_dir(current_selected_target.heading)
 
-			-- Check if player is in range and in firing arc (green if valid, red otherwise)
-			local in_range = ship_systems.is_in_range(grabon_pos, ship_pos, grabon_ai.attack_range)
-			local in_arc = ship_systems.is_in_firing_arc(grabon_pos, grabon_dir, ship_pos, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end)
-			local arc_color = (in_range and in_arc) and 11 or 8  -- Green (11) if valid firing position, red (8) otherwise
+			for _, weapon in ipairs(grabon_ai.weapons) do
+				if weapon.firing_arc_start and weapon.firing_arc_end and weapon.range then
+					-- Check if player is in range and in firing arc (green if valid, red otherwise)
+					local in_range = ship_systems.is_in_range(grabon_pos, ship_pos, weapon.range)
+					local in_arc = ship_systems.is_in_firing_arc(grabon_pos, grabon_dir, ship_pos, weapon.firing_arc_start, weapon.firing_arc_end)
+					local arc_color = (in_range and in_arc) and 11 or 8  -- Green (11) if valid firing position, red (8) otherwise
 
-			weapon_effects.draw_firing_arc(grabon_pos, grabon_dir, grabon_ai.attack_range, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end, camera, utilities.draw_line_3d, arc_color)
+					weapon_effects.draw_firing_arc(grabon_pos, grabon_dir, weapon.range, weapon.firing_arc_start, weapon.firing_arc_end, camera, utilities.draw_line_3d, arc_color)
+				end
+			end
 		end
 	end
 end

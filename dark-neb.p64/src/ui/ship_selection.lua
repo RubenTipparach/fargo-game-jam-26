@@ -11,7 +11,8 @@ local ShipSelection = {}
 -- @param ship_pos: player ship position {x, y, z}
 -- @param camera: camera object
 -- @param project_point: function to project 3D point to screen space
-function ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target, hovered_target, ship_pos, camera, project_point)
+-- @param Config: game configuration (optional, for debug flags)
+function ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target, hovered_target, ship_pos, camera, project_point, Config)
 	for _, enemy in ipairs(enemy_ships) do
 		if (enemy.type == "satellite" or enemy.type == "grabon") and enemy.position and not enemy.is_destroyed then
 			local sat_collider = enemy.config.collider
@@ -69,6 +70,15 @@ function ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target
 				local label_x = (min_screen_x + max_screen_x) / 2 - 10  -- Center the text roughly
 				local label_y = max_screen_y + 3  -- Below the box
 				print(distance_text, label_x, label_y, box_color)
+
+				-- Draw AI state and speed if debug_ai is enabled and enemy has AI state
+				if Config and Config.debug_ai and enemy.ai_current_state then
+					local speed_value = enemy.current_speed or 0
+					local ai_state_text = string.format("%s spd:%.2f", enemy.ai_current_state, speed_value)
+					local ai_label_x = (min_screen_x + max_screen_x) / 2 - (#ai_state_text * 2)  -- Center the text
+					local ai_label_y = max_screen_y + 11  -- Below distance label
+					print(ai_state_text, ai_label_x, ai_label_y, 10)  -- Yellow color for AI state
+				end
 			end
 		end
 	end
