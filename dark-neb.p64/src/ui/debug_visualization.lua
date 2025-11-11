@@ -4,6 +4,9 @@
 
 local DebugVisualization = {}
 
+-- Debug mask offset (for cycling brightness masks with O/P keys)
+local debug_mask_offset = 0
+
 -- Draw weapons UI debug hitboxes
 function DebugVisualization.draw_weapon_hitboxes(WeaponsUI, Config, mx, my)
 	local weapon_hitboxes = WeaponsUI.get_weapon_hitboxes(Config)
@@ -106,20 +109,22 @@ function DebugVisualization.draw_full_debug_ui(all_faces, RendererLit)
 	-- Control hints
 	print("mouse: orbit camera", 2, 18, 7)
 	print("wasd: rotate light", 2, 26, 7)
-	print("faces: " .. #all_faces, 2, 34, 7)
+	print("o/p: cycle masks", 2, 34, 7)
+	print("faces: " .. #all_faces, 2, 42, 7)
 
 	-- Show sprite system (texture + brightness masks)
 	local debug_x = 320
 	local debug_y = 10
+	local debug_sprite = 32  -- Sprite to display for debugging
 
-	-- Show texture sprite (sprite 1 only)
+	-- Show texture sprite (sprite 32)
 	print("texture:", debug_x - 60, debug_y, 7)
-	spr(1, debug_x, debug_y + 8)
-	print("1", debug_x + 6, debug_y + 26, 7)
+	spr(debug_sprite, debug_x, debug_y + 8)
+	print(debug_sprite, debug_x + 3, debug_y + 26, 7)
 
-	-- Show generated brightness sprites for sprite 1
+	-- Show generated brightness sprites for sprite 32
 	local brightness_levels = RendererLit.BRIGHTNESS_LEVELS or 4
-	print("sprite 1 brightness (0-" .. (brightness_levels - 1) .. "):", debug_x - 60, debug_y + 40, 7)
+	print("sprite " .. debug_sprite .. " brightness (0-" .. (brightness_levels - 1) .. ") offset:" .. debug_mask_offset, debug_x - 60, debug_y + 40, 7)
 
 	-- Display sprites with wrapping (8 per row max to fit on screen)
 	local sprites_per_row = 8
@@ -129,9 +134,20 @@ function DebugVisualization.draw_full_debug_ui(all_faces, RendererLit)
 		local x = debug_x + col * 18
 		local y = debug_y + 48 + row * 24
 
-		local cached_sprite_index = RendererLit.get_brightness_sprite(1, level)
+		-- Use the brightness level as-is, but pass mask_offset as separate parameter
+		local cached_sprite_index = RendererLit.get_brightness_sprite(debug_sprite, level, debug_mask_offset)
 		spr(cached_sprite_index, x, y)
+
+		-- Display brightness level
 		print(level, x + (level < 10 and 6 or 3), y + 18, 7)
+
+		-- Display mask ID below sprite (apply offset to mask calculation)
+		local base_mask_id = RendererLit.get_mask_id(level)
+		local adjusted_mask_id = base_mask_id + debug_mask_offset
+		-- Clamp to valid range
+		if adjusted_mask_id < 1 then adjusted_mask_id = 1 end
+		if adjusted_mask_id > 63 then adjusted_mask_id = 63 end
+		print("m:" .. adjusted_mask_id, x, y + 26, 10)  -- Yellow text for mask ID
 	end
 
 	-- Show all 64 palette colors
@@ -187,6 +203,18 @@ function DebugVisualization.draw_physics_debug(ship_pos, show_planet, spawned_sp
 			             arrow_end_x, enemy.position.y, arrow_end_z, camera, 10)  -- Yellow arrow
 		end
 	end
+end
+
+-- Adjust debug mask offset (for O/P key controls)
+-- @param delta: amount to adjust offset (+1 or -1)
+function DebugVisualization.adjust_mask_offset(delta)
+	debug_mask_offset = debug_mask_offset + delta
+	printh("Debug mask offset: " .. debug_mask_offset)
+end
+
+-- Get current debug mask offset
+function DebugVisualization.get_mask_offset()
+	return debug_mask_offset
 end
 
 return DebugVisualization

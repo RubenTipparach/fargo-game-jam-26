@@ -1887,6 +1887,16 @@ function _update()
 		light_pitch = mid(-1.5, light_pitch, 1.5)
 	end
 
+	-- O/P controls for cycling brightness mask offset (only when debug is enabled)
+	if Config.debug then
+		if keyp("o") then
+			DebugVisualization.adjust_mask_offset(-1)
+		end
+		if keyp("p") then
+			DebugVisualization.adjust_mask_offset(1)
+		end
+	end
+
 	-- X key to fire debug beam (VFX only, no damage logic)
 	if Config.enable_x_button and keyp("x") then
 		printh("X KEY PRESSED - FIRING DEBUG BEAM!")
@@ -3053,42 +3063,7 @@ function _draw()
 	ShipSelection.draw_selection_boxes(enemy_ships, current_selected_target, hovered_target, ship_pos, camera, project_point, Config)
 
 	-- Draw health bar at top left
-	local health_config = Config.health
-	local health_bar_x = health_config.health_bar_x
-	local health_bar_y = health_config.health_bar_y
-	local health_bar_width = health_config.health_bar_width
-	local health_bar_height = health_config.health_bar_height
-
-	-- Health bar background (black)
-	rectfill(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 0)
-
-	-- Health bar fill (green -> red based on health)
-	local health_percent = current_health / Config.health.max_health
-	local fill_width = health_bar_width * health_percent
-	local health_color = health_percent > 0.5 and 3 or (health_percent > 0.25 and 8 or 8)  -- Green if >50%, yellow if >25%, red if <=25%
-	if health_percent > 0.5 then
-		health_color = 11  -- Bright green/cyan
-	elseif health_percent > 0.25 then
-		health_color = 10  -- Yellow
-	else
-		health_color = 8  -- Red
-	end
-	if fill_width > 0 then
-		rectfill(health_bar_x, health_bar_y, health_bar_x + fill_width, health_bar_y + health_bar_height, health_color)
-	end
-
-	-- Health bar border (white)
-	rect(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 7)
-
-	-- Health text (inside the box with drop shadow)
-	local health_display = flr(current_health)
-	local health_text = "HP: " .. health_display
-	local text_x = health_bar_x + 3
-	local text_y = health_bar_y + 2
-	-- Draw text shadow
-	print(health_text, text_x + 1, text_y + 1, 1)
-	-- Draw text
-	print(health_text, text_x, text_y, 7)
+	UIRenderer.draw_health_bar(Config, current_health)
 
 	-- Draw energy bars
 	draw_energy_bars(mx, my)

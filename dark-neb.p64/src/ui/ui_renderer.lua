@@ -119,6 +119,48 @@ function UIRenderer.draw_cpu_stats(Config)
 	end
 end
 
+-- Draw health bar at top left
+-- @param Config: game configuration
+-- @param current_health: current player health value
+function UIRenderer.draw_health_bar(Config, current_health)
+	local health_config = Config.health
+	local health_bar_x = health_config.health_bar_x
+	local health_bar_y = health_config.health_bar_y
+	local health_bar_width = health_config.health_bar_width
+	local health_bar_height = health_config.health_bar_height
+
+	-- Health bar background (black)
+	rectfill(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 0)
+
+	-- Health bar fill (green -> red based on health)
+	local health_percent = current_health / Config.health.max_health
+	local fill_width = health_bar_width * health_percent
+	local health_color
+	if health_percent > 0.5 then
+		health_color = 11  -- Bright green/cyan
+	elseif health_percent > 0.25 then
+		health_color = 10  -- Yellow
+	else
+		health_color = 8  -- Red
+	end
+	if fill_width > 0 then
+		rectfill(health_bar_x, health_bar_y, health_bar_x + fill_width, health_bar_y + health_bar_height, health_color)
+	end
+
+	-- Health bar border (white)
+	rect(health_bar_x, health_bar_y, health_bar_x + health_bar_width, health_bar_y + health_bar_height, 7)
+
+	-- Health text (inside the box with drop shadow)
+	local health_display = flr(current_health)
+	local health_text = "HP: " .. health_display
+	local text_x = health_bar_x + 3
+	local text_y = health_bar_y + 2
+	-- Draw text shadow
+	print(health_text, text_x + 1, text_y + 1, 1)
+	-- Draw text
+	print(health_text, text_x, text_y, 7)
+end
+
 -- Draw minimap
 -- @param ship_pos: Ship position table {x, y, z}
 -- @param planet_pos: Planet position table {x, y, z}

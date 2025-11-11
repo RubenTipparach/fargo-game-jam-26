@@ -36,8 +36,9 @@ local BRIGHTNESS_LEVELS = 8
 -- Uses color table (sprite 16) to remap colors based on brightness
 -- Each brightness level uses a different row of the color table
 -- Rows 56-63 contain the brightness gradients (dark to bright)
+-- IMPORTANT: Colors 55-63 are reserved for color table lookups and treated as transparent (0)
 local colorMapper8 = {
-	{index = 0, mask = 5},
+	{index = 0, mask = 1},
 	{index = 1, mask = 16},
 	{index = 2, mask = 8},
 	{index = 3, mask = 12},
@@ -46,6 +47,19 @@ local colorMapper8 = {
 	{index = 6, mask = 10},
 	{index = 7, mask = 0}    -- Brightest (row 63)
 }
+
+-- local colorMapper8 = {
+-- 	{index = 0, mask = 1},
+-- 	{index = 1, mask = 2},
+-- 	{index = 2, mask = 3},
+-- 	{index = 3, mask = 4},
+-- 	{index = 4, mask = 5},
+-- 	{index = 5, mask = 6},
+-- 	{index = 6, mask = 7},
+-- 	{index = 7, mask = 8}    -- Brightest (row 63)
+-- }
+
+
 
 -- Starting sprite slot for cached brightness sprites
 -- We'll use sprites 128-255 for caching (128 slots to be safe)
@@ -110,20 +124,29 @@ end
 -- Generate a brightness-modified sprite by applying color table
 -- @param sprite_id: the original sprite index
 -- @param brightness_level: 0-7 (0=darkest, 7=brightest)
+-- @param mask_offset: optional offset to add to mask selection (for debug visualization)
 -- @return sprite_index: index of the cached brightness sprite
-function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
+function RendererLit.get_brightness_sprite(sprite_id, brightness_level, mask_offset)
 	-- Ensure color table is loaded
 	if not base_color_table then
 		RendererLit.init_color_table()
 	end
 
+	mask_offset = mask_offset or 0
+
 	-- Clamp brightness level to valid range FIRST (before cache check)
 	if brightness_level < 0 then brightness_level = 0 end
 	if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
 
+	-- Create unique cache key when using mask offset
+	local cache_key = brightness_level
+	if mask_offset ~= 0 then
+		cache_key = brightness_level + mask_offset * 100  -- Offset by 100s to keep cache separate
+	end
+
 	-- Check cache AFTER clamping
-	if cached_sprites[sprite_id] and cached_sprites[sprite_id][brightness_level] then
-		return cached_sprites[sprite_id][brightness_level]
+	if cached_sprites[sprite_id] and cached_sprites[sprite_id][cache_key] then
+		return cached_sprites[sprite_id][cache_key]
 	end
 
 	-- Get original sprite
@@ -139,7 +162,9 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 		printh("ERROR: Invalid brightness_level " .. brightness_level)
 		return sprite_id  -- Fallback to original sprite
 	end
-	local color_table_row = config.mask
+
+	-- Apply mask offset to the mask selection
+	local color_table_row = config.mask + mask_offset
 
 	-- If mask is 0, don't use color table - return original sprite
 	if color_table_row == 0 then
@@ -147,10 +172,14 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 		if not cached_sprites[sprite_id] then
 			cached_sprites[sprite_id] = {}
 		end
-		cached_sprites[sprite_id][brightness_level] = sprite_id
+		cached_sprites[sprite_id][cache_key] = sprite_id
 
 		return sprite_id
 	end
+
+	-- Clamp mask to valid color table range (1-63)
+	if color_table_row < 1 then color_table_row = 1 end
+	if color_table_row > 63 then color_table_row = 63 end
 
 	-- Get sprite dimensions (supports 16x16, 64x32, etc.)
 	local sprite_w = original_sprite:width()
@@ -173,7 +202,8 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 			-- High 2 bits are color table selection metadata
 			local color_index = c & 0x3f
 
-			if color_index == 0 then
+			-- Colors 0 and 55-63 are reserved/transparent (color table lookup range)
+			if color_index == 0 or color_index >= 55 then
 				-- Keep transparent pixels as 0
 				new_sprite:set(x, y, 0)
 			else
@@ -184,8 +214,36 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 				if base_color_table then
 					local remapped_color = base_color_table:get(color_index, color_table_row)
 
-					-- Use remapped color directly
-					if remapped_color and remapped_color > 0 then
+					-- If remapped color is 0 or in reserved range (55-63), try next sprite indices
+					if remapped_color == 0 or remapped_color >= 55 then
+						-- Try sprite indices +1, +2, +3... until we find a valid color
+						local test_sprite_index = sprite_id + 1
+						local max_attempts = 10  -- Limit search to avoid infinite loop
+						local found_color = nil
+
+						for attempt = 1, max_attempts do
+							local test_sprite = get_spr(test_sprite_index)
+							if test_sprite then
+								-- Get the same pixel from the next sprite
+								local test_color = test_sprite:get(x, y) & 0x3f
+								-- Skip colors 0 and 55-63 (reserved)
+								if test_color ~= 0 and test_color < 55 then
+									-- Remap this color through the color table
+									local test_remapped = base_color_table:get(test_color, color_table_row)
+									-- Accept if non-zero and not in reserved range
+									if test_remapped and test_remapped > 0 and test_remapped < 55 then
+										found_color = test_remapped
+										break
+									end
+								end
+							end
+							test_sprite_index = test_sprite_index + 1
+						end
+
+						-- Use found color, or fallback to original color index if nothing found
+						new_sprite:set(x, y, found_color or color_index)
+					elseif remapped_color > 0 then
+						-- Use remapped color directly (non-zero)
 						new_sprite:set(x, y, remapped_color)
 					else
 						-- Fallback: keep original color index
@@ -216,42 +274,61 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level)
 	if not cached_sprites[sprite_id] then
 		cached_sprites[sprite_id] = {}
 	end
-	cached_sprites[sprite_id][brightness_level] = cache_slot
+	cached_sprites[sprite_id][cache_key] = cache_slot
 
-	-- Debug: Print sprite 1 data for all brightness levels
-	if sprite_id == 1 then
-		printh("===== SPRITE 1 BRIGHTNESS " .. brightness_level .. " =====")
-		printh("Cache slot: " .. cache_slot .. " | Row: " .. color_table_row)
-
-		-- Print remapped sprite pixel data
-		for y = 0, 15 do
-			local row = ""
-			for x = 0, 15 do
-				local c = new_sprite:get(x, y)
-				if c < 10 then
-					row = row .. " " .. c .. " "
-				elseif c < 100 then
-					row = row .. c .. " "
-				else
-					row = row .. c
-				end
-			end
-			printh(row)
-		end
-
-		-- After generating all brightness levels, print verification
-		local sprite1_variants = 0
-		if cached_sprites[1] then
-			for _ in pairs(cached_sprites[1]) do
-				sprite1_variants = sprite1_variants + 1
-			end
-		end
-
-		printh("Sprite 1 variants: " .. sprite1_variants .. " / " .. BRIGHTNESS_LEVELS .. " expected")
-		printh("=======================================")
+	-- Debug: Print sprite data for sprite 32 (debug sprite)
+	if sprite_id == 32 and mask_offset == 0 then
+		RendererLit.print_sprite_matrix(cache_slot, brightness_level, color_table_row)
 	end
 
 	return cache_slot
+end
+
+-- Get the mask ID for a given brightness level
+-- @param brightness_level: 0-7 (0=darkest, 7=brightest)
+-- @return mask_id: the color table row ID used for this brightness level
+function RendererLit.get_mask_id(brightness_level)
+	-- Clamp brightness level to valid range
+	if brightness_level < 0 then brightness_level = 0 end
+	if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
+
+	local config = colorMapper8[brightness_level + 1]  -- Lua is 1-indexed
+	if config then
+		return config.mask
+	end
+	return 0
+end
+
+-- Print sprite data as 16x16 matrix to console
+-- @param sprite_index: the sprite index to print
+-- @param brightness_level: the brightness level (for header)
+-- @param mask_id: the mask ID used (for header)
+function RendererLit.print_sprite_matrix(sprite_index, brightness_level, mask_id)
+	local sprite = get_spr(sprite_index)
+	if not sprite then
+		printh("ERROR: Could not load sprite " .. sprite_index)
+		return
+	end
+
+	printh("===== SPRITE " .. sprite_index .. " | BRIGHTNESS " .. brightness_level .. " | MASK " .. mask_id .. " =====")
+
+	-- Print 16x16 matrix
+	for y = 0, 15 do
+		local row = ""
+		for x = 0, 15 do
+			local c = sprite:get(x, y)
+			-- Format color index with padding
+			if c < 10 then
+				row = row .. " " .. c .. " "
+			elseif c < 100 then
+				row = row .. c .. " "
+			else
+				row = row .. c
+			end
+		end
+		printh(row)
+	end
+	printh("=====================================")
 end
 
 -- Get a cached sprite userdata for debugging (returns the userdata directly)
