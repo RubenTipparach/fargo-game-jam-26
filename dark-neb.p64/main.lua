@@ -33,6 +33,7 @@ Button = include("src/ui/button.lua")
 ArcUI = include("src/ui/arc_ui.lua")
 WeaponsUI = include("src/ui/weapons_ui.lua")
 ShipSelection = include("src/ui/ship_selection.lua")
+ArcVisualization = include("src/ui/arc_visualization.lua")
 WeaponEffects = include("src/systems/weapon_effects.lua")
 Missions = include("src/systems/missions.lua")
 ShipSystems = include("src/systems/ship_systems.lua")
@@ -3331,42 +3332,15 @@ function _draw()
 		end
 	end
 
-	-- Draw weapon effects (beams, explosions, smoke)
-	local utilities = {
-		draw_line_3d = draw_line_3d,
-		project_to_screen = project_point,
-		Renderer = Renderer,
-	}
-	WeaponEffects.draw(camera, utilities)
-
-	-- Draw heading compass (arc, heading lines) when ship is moving or turning
-	-- Calculate angle difference to see if we need to draw the compass
-	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
-
-	-- Draw heading arc using ArcUI module
+	-- Draw all arc visualizations (weapon effects, heading arc, firing arcs)
 	local utilities = {
 		draw_line_3d = draw_line_3d,
 		dir_to_quat = dir_to_quat,
-		quat_to_dir = quat_to_dir
+		quat_to_dir = quat_to_dir,
+		project_to_screen = project_point,
+		Renderer = Renderer,
 	}
-	ArcUI.draw_heading_arc(ship_heading_dir, target_heading_dir, angle_diff, camera, Config, utilities)
-
-	-- Draw Grabon firing arc visualization when selected and firing arcs are enabled
-	if current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position and Config.show_firing_arcs then
-		local grabon_pos = current_selected_target.position
-		local grabon_ai = current_selected_target.config.ai
-		if grabon_ai then
-			-- Draw the firing arc for Grabon
-			local grabon_dir = angle_to_dir(current_selected_target.heading)
-
-			-- Check if player is in range and in firing arc (green if valid, red otherwise)
-			local in_range = ShipSystems.is_in_range(grabon_pos, ship_pos, grabon_ai.attack_range)
-			local in_arc = ShipSystems.is_in_firing_arc(grabon_pos, grabon_dir, ship_pos, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end)
-			local arc_color = (in_range and in_arc) and 11 or 8  -- Green (11) if valid firing position, red (8) otherwise
-
-			WeaponEffects.draw_firing_arc(grabon_pos, grabon_dir, grabon_ai.attack_range, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end, camera, draw_line_3d, arc_color)
-		end
-	end
+	ArcVisualization.draw_all_arcs(ship_heading_dir, target_heading_dir, current_selected_target, ship_pos, camera, Config, WeaponEffects, ArcUI, utilities, angle_to_dir, angle_difference, ShipSystems)
 
 	-- Draw physics debug wireframes if enabled
 	if Config.debug_physics and ship_pos then
