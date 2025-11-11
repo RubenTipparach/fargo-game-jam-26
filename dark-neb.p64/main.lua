@@ -38,6 +38,7 @@ DebugVisualization = include("src/ui/debug_visualization.lua")
 WeaponEffects = include("src/systems/weapon_effects.lua")
 Missions = include("src/systems/missions.lua")
 ShipSystems = include("src/systems/ship_systems.lua")
+AISystem = include("src/systems/ai_system.lua")
 Minimap = include("src/minimap.lua")
 Menu = include("src/menu.lua")
 Config = include("config.lua")
@@ -60,8 +61,15 @@ local camera = {
 local target_rx = Config.camera.rx
 local target_ry = Config.camera.ry
 
+-- Target camera position (for smooth following)
+local target_camera_x = 0
+local target_camera_z = 0
+local last_valid_camera_x = 0
+local last_valid_camera_z = 0
+
 -- Mouse orbit state
 local mouse_drag = false
+local mouse_down_frames = 0  -- Track how long mouse has been held down
 local last_mouse_x = 0
 local last_mouse_y = 0
 local last_mouse_button_state = false  -- Track previous frame's button state for click detection
@@ -1133,212 +1141,7 @@ end
 -- Update Grabon AI for Mission 3
 -- Handles movement, rotation, target detection, and weapon firing
 function update_grabon_ai()
-	for _, enemy in ipairs(enemy_ships) do
-		if enemy.type == "grabon" and not enemy.is_destroyed then
-			local ai = enemy.config.ai
-
-			-- Detect player target
-			if not enemy.ai_target_detected then
-				-- Detect if player within sensor range
-				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.target_detection_range) then
-					enemy.ai_target_detected = true
-					enemy.ai_target = ship_pos
-				end
-			end
-
-			if enemy.ai_target_detected then
-				-- Update target position (follow player)
-				enemy.ai_target = ship_pos
-
-				-- Calculate direction to target
-				local dx = enemy.ai_target.x - enemy.position.x
-				local dz = enemy.ai_target.z - enemy.position.z
-				local target_distance = math.sqrt(dx*dx + dz*dz)
-
-				if target_distance > 0 then
-					-- Calculate target heading (0-1 turns)
-					local target_heading = atan2(dx, dz) / (2 * math.pi)
-					if target_heading < 0 then target_heading = target_heading + 1 end
-
-					-- Smoothly rotate towards target
-					local heading_diff = target_heading - enemy.heading
-					-- Normalize heading difference to -0.5 to 0.5 range
-					if heading_diff > 0.5 then
-						heading_diff = heading_diff - 1
-					elseif heading_diff < -0.5 then
-						heading_diff = heading_diff + 1
-					end
-
-					-- Apply turn rate
-					enemy.heading = enemy.heading + heading_diff * ai.turn_rate
-					-- Normalize heading to 0-1 range
-					if enemy.heading < 0 then enemy.heading = enemy.heading + 1 end
-					if enemy.heading >= 1 then enemy.heading = enemy.heading - 1 end
-				end
-
-				-- Initialize velocity if needed
-			if not enemy.velocity then
-				enemy.velocity = {x = 0, z = 0}
-			end
-
-			-- Determine if Grabon should retreat (health below 40%)
-			local should_retreat = enemy.current_health < (enemy.max_health * 0.4)
-
-			-- Convert heading (0-1 turns) to direction vector
-			local forward_dir = angle_to_dir(enemy.heading)
-
-			-- Determine desired acceleration direction based on AI state
-			local desired_accel = 0  -- Default: no acceleration
-			local max_speed = ai.speed * 0.1  -- Scale down max speed significantly
-
-			if should_retreat and target_distance < 200 then
-				-- Retreat away from player - accelerate backward
-				desired_accel = -0.05  -- Small acceleration value for backward
-			elseif target_distance > ai.attack_range then
-				-- Move towards target - accelerate forward
-				desired_accel = 0.05  -- Small acceleration value for forward
-			else
-				-- Within attack range - maintain current speed or decelerate slightly
-				desired_accel = 0
-			end
-
-			-- Check for obstacles and adjust acceleration if colliding
-			local collision_threshold = 5.0
-			local collision_detected = false
-
-			-- Check collision with player
-			if target_distance < collision_threshold then
-				collision_detected = true
-			end
-
-			-- Check collision with other enemies/satellites
-			for _, other_enemy in ipairs(enemy_ships) do
-				if other_enemy.id ~= enemy.id and other_enemy.position then
-					local odx = other_enemy.position.x - enemy.position.x
-					local odz = other_enemy.position.z - enemy.position.z
-					local other_distance = math.sqrt(odx*odx + odz*odz)
-					if other_distance < collision_threshold then
-						collision_detected = true
-						break
-					end
-				end
-			end
-
-			-- Check collision with spawned objects (asteroids, planets)
-			for _, obj in ipairs(spawned_spheres) do
-				if obj.x and obj.z then
-					local odx = obj.x - enemy.position.x
-					local odz = obj.z - enemy.position.z
-					local obj_distance = math.sqrt(odx*odx + odz*odz)
-					if obj_distance < collision_threshold then
-						collision_detected = true
-						break
-					end
-				end
-			end
-
-			-- If collision detected, reduce acceleration to avoid obstacle
-			if collision_detected then
-				-- Reduce desired acceleration by 50% to try to navigate around obstacles
-				desired_accel = desired_accel * 0.5
-			end
-
-			-- Apply acceleration to velocity (similar to player ship physics)
-			local accel_rate = 0.02  -- Acceleration rate per frame (slower acceleration)
-			local current_forward_speed = enemy.velocity.x * forward_dir.x + enemy.velocity.z * forward_dir.z
-			local new_forward_speed = current_forward_speed + desired_accel * accel_rate
-
-			-- Clamp speed to max_speed
-			if new_forward_speed > max_speed then
-				new_forward_speed = max_speed
-			elseif new_forward_speed < -max_speed * 0.5 then  -- Allow backward movement at half speed
-				new_forward_speed = -max_speed * 0.5
-			end
-
-			-- Apply friction when no acceleration (deceleration)
-			if desired_accel == 0 then
-				new_forward_speed = new_forward_speed * 0.95  -- Friction
-			end
-
-			-- Update current speed for movement (like player ship)
-			if not enemy.current_speed then enemy.current_speed = 0 end
-			if not enemy.target_speed then enemy.target_speed = new_forward_speed end
-			enemy.target_speed = new_forward_speed
-			enemy.current_speed = enemy.current_speed + (enemy.target_speed - enemy.current_speed) * 0.08
-
-			-- Apply movement only in the direction Grabon is facing
-			if abs(enemy.current_speed) > 0.01 then
-				local move_speed = enemy.current_speed * ai.speed * 0.1
-				enemy.position.x = enemy.position.x + forward_dir.x * move_speed
-				enemy.position.z = enemy.position.z + forward_dir.z * move_speed
-			end
-
-						-- Fire weapons if in range and in firing arc
-				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.attack_range) and not is_dead then
-					-- Check if in firing arc
-					if ShipSystems.is_in_firing_arc(enemy.position, forward_dir, ship_pos, ai.firing_arc_start, ai.firing_arc_end) then
-						-- Fire weapons on interval
-						for w = 1, #ai.weapons do
-							local weapon = ai.weapons[w]
-							local current_time = t()  -- Get current elapsed time (Picotron API)
-
-							if not enemy.ai_last_weapon_fire_time then
-								enemy.ai_last_weapon_fire_time = {}
-							end
-
-							if not enemy.ai_last_weapon_fire_time[w] then
-								enemy.ai_last_weapon_fire_time[w] = 0
-							end
-
-							-- Fire if enough time has passed
-							if current_time - enemy.ai_last_weapon_fire_time[w] > weapon.fire_rate then
-								-- Fire beam from Grabon towards player
-								-- Calculate muzzle position using weapon offset
-								local muzzle_offset = weapon.muzzle_offset or {x = 0, y = 0, z = 0}
-								local muzzle_pos = {
-									x = enemy.position.x + muzzle_offset.x,
-									y = enemy.position.y + muzzle_offset.y,
-									z = enemy.position.z + muzzle_offset.z,
-								}
-								WeaponEffects.fire_beam(muzzle_pos, ship_pos, 12)  -- Sprite 12 for Grabon disruptor beams
-								-- Apply shield absorption first
-								local health_before = player_health_obj.current_health
-								local shield_absorbed = apply_shield_absorption()
-								if not shield_absorbed then
-									-- Shields didn't absorb, apply damage to health
-									WeaponEffects.spawn_explosion(ship_pos, player_health_obj)
-									-- Sync current_health with player_health_obj
-									current_health = player_health_obj.current_health
-									-- Check if player died
-									if current_health <= 0 then
-										is_dead = true
-										death_time = 0
-										-- Spawn explosion at ship position when player dies
-										if Config.explosion.enabled then
-											table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
-											sfx(3)
-										end
-									end
-									-- Reset shield charge progress when hit without shields
-									for i = 1, 3 do
-										shield_charge.boxes[i] = 0
-									end
-									-- Spawn additional damage effects when player takes health damage
-									if player_health_obj.current_health < health_before then
-										WeaponEffects.spawn_smoke(ship_pos)
-									end
-								else
-									printh("Shield absorbed Grabon attack!")
-								end
-								-- Track firing time
-								enemy.ai_last_weapon_fire_time[w] = current_time
-							end
-						end
-					end
-				end
-			end
-		end
-	end
+	current_health, is_dead = AISystem.update_grabon_ai(enemy_ships, ship_pos, is_dead, player_health_obj, current_health, active_explosions, spawned_spheres, Config, ShipSystems, WeaponEffects, Explosion, shield_charge, angle_to_dir, apply_shield_absorption)
 end
 
 -- Apply shield absorption to damage before applying to health
@@ -1885,31 +1688,38 @@ function _update()
 			end
 			-- Camera orbit (free rotate when not locked)
 			if not camera_locked_to_target then
-				if not mouse_drag then
-					-- Start dragging
-					mouse_drag = true
-					last_mouse_x = mx
-					last_mouse_y = my
-				else
-					-- Continue dragging
-					local dx = mx - last_mouse_x
-					local dy = my - last_mouse_y
+				-- Increment mouse down counter
+				mouse_down_frames = mouse_down_frames + 1
 
-					-- Update target camera rotation (Y axis up)
-					target_ry = target_ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
-					-- Enable pitch rotation with mouse Y movement
-					target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
+				-- Only activate drag after 10 frames (approx 0.17/2 seconds at 60fps)
+				if mouse_down_frames >= 5 then
+					if not mouse_drag then
+						-- Start dragging
+						mouse_drag = true
+						last_mouse_x = mx
+						last_mouse_y = my
+					else
+						-- Continue dragging
+						local dx = mx - last_mouse_x
+						local dy = my - last_mouse_y
 
-					-- Clamp target pitch to avoid gimbal lock
-					target_rx = mid(-1.5, target_rx, 1.5)
+						-- Update target camera rotation (Y axis up)
+						target_ry = target_ry + dx * Config.camera.orbit_sensitivity  -- yaw (rotate around Y)
+						-- Enable pitch rotation with mouse Y movement
+						target_rx = target_rx + dy * Config.camera.orbit_sensitivity  -- pitch (rotate around X)
 
-					last_mouse_x = mx
-					last_mouse_y = my
+						-- Clamp target pitch to avoid gimbal lock
+						target_rx = mid(-1.5, target_rx, 1.5)
+
+						last_mouse_x = mx
+						last_mouse_y = my
+					end
 				end
 			end
 		end
 	else
 		mouse_drag = false
+		mouse_down_frames = 0  -- Reset counter when mouse is released
 		slider_dragging = false
 	end
 
@@ -2430,9 +2240,15 @@ function _update()
 		end
 	end
 
-	-- Camera follows ship (focus point tracks ship position)
-	camera.x = Config.ship.position.x
-	camera.z = Config.ship.position.z
+	-- Camera follows ship with smooth interpolation (focus point tracks ship position)
+	target_camera_x = Config.ship.position.x
+	target_camera_z = Config.ship.position.z
+
+	-- Smooth camera following (lerp factor: 0.15 = smooth, 1.0 = instant)
+	local camera_smoothing = 0.15
+	camera.x = camera.x + (target_camera_x - camera.x) * camera_smoothing
+	camera.z = camera.z + (target_camera_z - camera.z) * camera_smoothing
+
 	-- Keep camera height from config
 	camera.y = Config.camera.height or 0
 
@@ -2678,9 +2494,15 @@ function _update()
 				-- Clear camera targeting settings
 				camera_locked_to_target = false
 				if camera_pitch_before_targeting then
+					-- Reset both camera pitch and target pitch to prevent smoothing jitter
 					camera.rx = camera_pitch_before_targeting
+					target_rx = camera_pitch_before_targeting
 					camera_pitch_before_targeting = nil
 				end
+
+				-- Reset camera position to ship to prevent jitter from smoothing
+				camera.x = Config.ship.position.x
+				camera.z = Config.ship.position.z
 			end
 		end
 	end

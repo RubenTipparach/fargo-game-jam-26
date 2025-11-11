@@ -287,7 +287,7 @@ Config.energy = {
 			color_full = 12,  -- blue
 			color_empty = 0,
 			label_offset = 5,  -- X offset from last box to label text
-			charge_time = 15.0,  -- Seconds per shield box to fully charge
+			charge_time = 10.0,  -- Seconds per shield box to fully charge
 		},
 		tractor_beam = {
 			capacity = 2,
