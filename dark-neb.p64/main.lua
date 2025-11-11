@@ -1274,16 +1274,8 @@ function update_grabon_ai()
 
 						-- Fire weapons if in range and in firing arc
 				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.attack_range) and not is_dead then
-					-- Calculate if target is in firing arc
-					local heading_to_target = atan2(dx, dz) / (2 * math.pi)
-					if heading_to_target < 0 then heading_to_target = heading_to_target + 1 end
-
-					local arc_angle = (heading_to_target - enemy.heading) * 360
-					if arc_angle > 180 then arc_angle = arc_angle - 360 end
-					if arc_angle < -180 then arc_angle = arc_angle + 360 end
-
 					-- Check if in firing arc
-					if arc_angle >= ai.firing_arc_start and arc_angle <= ai.firing_arc_end then
+					if ShipSystems.is_in_firing_arc(enemy.position, enemy.heading, ship_pos, ai.firing_arc_start, ai.firing_arc_end) then
 						-- Fire weapons on interval
 						for w = 1, #ai.weapons do
 							local weapon = ai.weapons[w]
@@ -1837,7 +1829,7 @@ function _update()
 						if target_pos and target_ref then
 							-- Check if target is in range and in firing arc
 							local in_range = ShipSystems.is_in_range(ship_pos, target_pos, weapon.range)
-							local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
+							local in_arc = ShipSystems.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
 
 							if in_range and in_arc then
 								-- Fire beam
@@ -2199,7 +2191,7 @@ function _update()
 				-- Check if target is in range and in firing arc
 				local weapon = Config.weapons[i]
 				local in_range = ShipSystems.is_in_range(ship_pos, target_pos, weapon.range)
-				local in_arc = WeaponEffects.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
+				local in_arc = ShipSystems.is_in_firing_arc(ship_pos, ship_heading_dir, target_pos, weapon.arc_start, weapon.arc_end)
 
 				if in_range and in_arc then
 					-- Fire beam
@@ -3166,7 +3158,7 @@ function _draw()
 	WeaponEffects.draw(camera, utilities)
 
 	-- Draw weapons UI
-	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my, ship_pos, ship_heading_dir, current_selected_target, WeaponEffects, camera, draw_line_3d)
+	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my, ship_pos, ship_heading_dir, current_selected_target, WeaponEffects, ShipSystems, camera, draw_line_3d)
 
 	-- Debug weapons UI hitboxes
 	if (Config.debug) then

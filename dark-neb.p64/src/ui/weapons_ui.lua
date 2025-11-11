@@ -36,9 +36,10 @@ local WEAPONS_CONFIG = {
 -- @param ship_heading_dir: current ship heading direction vector {x, z}
 -- @param current_target: current selected target (for range/arc validation)
 -- @param weapon_effects: WeaponEffects module for range/arc functions
+-- @param ship_systems: ShipSystems module for range/arc functions
 -- @param camera: camera object for drawing firing arc
 -- @param draw_line_3d: function to draw 3D lines
-function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, config, mouse_x, mouse_y, ship_pos, ship_heading_dir, current_target, weapon_effects, camera, draw_line_3d)
+function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, config, mouse_x, mouse_y, ship_pos, ship_heading_dir, current_target, weapon_effects, ship_systems, camera, draw_line_3d)
 	-- Position for weapons display
 	local base_x = WEAPONS_CONFIG.base_x
 	local y = 200  -- Standard position
@@ -100,9 +101,9 @@ function WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, c
 		-- Check if target is in range and firing arc
 		local in_range = false
 		local in_arc = false
-		if current_target and ship_pos and ship_heading_dir and weapon_effects then
-			in_range = weapon_effects.is_in_range(ship_pos, current_target.position, weapon.range)
-			in_arc = weapon_effects.is_in_firing_arc(ship_pos, ship_heading_dir, current_target.position, weapon.arc_start, weapon.arc_end)
+		if current_target and ship_pos and ship_heading_dir and ship_systems then
+			in_range = ship_systems.is_in_range(ship_pos, current_target.position, weapon.range)
+			in_arc = ship_systems.is_in_firing_arc(ship_pos, ship_heading_dir, current_target.position, weapon.arc_start, weapon.arc_end)
 		end
 
 		-- Draw status label above button
