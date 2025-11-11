@@ -1275,7 +1275,7 @@ function update_grabon_ai()
 						-- Fire weapons if in range and in firing arc
 				if ShipSystems.is_in_range(enemy.position, ship_pos, ai.attack_range) and not is_dead then
 					-- Check if in firing arc
-					if ShipSystems.is_in_firing_arc(enemy.position, enemy.heading, ship_pos, ai.firing_arc_start, ai.firing_arc_end) then
+					if ShipSystems.is_in_firing_arc(enemy.position, forward_dir, ship_pos, ai.firing_arc_start, ai.firing_arc_end) then
 						-- Fire weapons on interval
 						for w = 1, #ai.weapons do
 							local weapon = ai.weapons[w]
@@ -2850,6 +2850,10 @@ function _draw()
 	-- Get mouse position once for use throughout draw function
 	local mx, my, mb = mouse()
 
+	-- ========================================
+	-- BACKGROUND (Draw first)
+	-- ========================================
+
 	-- Draw stars first (before everything else)
 	draw_stars()
 
@@ -2860,6 +2864,10 @@ function _draw()
 		print("no model loaded!", 10, 50, 8)
 		return
 	end
+
+	-- ========================================
+	-- GEOMETRY (3D models and faces)
+	-- ========================================
 
 	local all_faces = {}
 
@@ -3045,6 +3053,40 @@ function _draw()
 	-- Draw faces using lit rendering with color tables
 	RendererLit.draw_faces(all_faces)
 
+	-- ========================================
+	-- WIREFRAME (3D overlays and effects)
+	-- ========================================
+
+	-- Draw velocity lines on top of everything (stationary in world space)
+	-- Reset drawing state to ensure lines render with correct colors
+	fillp()
+	palt()
+
+	for _, line_segment in ipairs(particle_trails) do
+		-- Calculate distance from ship to line start point
+		local dx = line_segment.x1 - Config.ship.position.x
+		local dy = line_segment.y1 - Config.ship.position.y
+		local dz = line_segment.z1 - Config.ship.position.z
+		local dist_from_ship = sqrt(dx * dx + dy * dy + dz * dz)
+
+		-- Color based on distance from ship using discrete palette
+		-- Palette: {28, 12, 7, 6, 13, 1} from closest to farthest
+		local palette = Config.particles.color_palette
+		local palette_size = #palette
+		local max_dist = Config.particles.max_dist
+
+		-- Map distance to palette index (0-1 normalized, then to palette index)
+		local dist_factor = min(1, max(0, dist_from_ship / max_dist))
+		local palette_index = flr(dist_factor * palette_size) + 1
+		palette_index = min(palette_size, palette_index)
+
+		local color = palette[palette_index]
+
+		-- Draw the velocity line (draws on top of model since it's after model rendering)
+		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
+		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
+	end
+
 	-- Draw raycast crosshair (shows where mouse points on ground plane)
 	if raycast_x and raycast_z then
 		-- Only show crosshair if it's within configured distance from ship on the XZ plane
@@ -3060,39 +3102,9 @@ function _draw()
 		end
 	end
 
-	-- Draw heading compass (arc, heading lines) when ship is moving or turning
-	-- Calculate angle difference to see if we need to draw the compass
-	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
-
-	-- Draw heading arc using ArcUI module
-	local utilities = {
-		draw_line_3d = draw_line_3d,
-		dir_to_quat = dir_to_quat,
-		quat_to_dir = quat_to_dir
-	}
-	ArcUI.draw_heading_arc(ship_heading_dir, target_heading_dir, angle_diff, camera, Config, utilities)
-
-	-- local ship_pos = Config.ship.position
-	-- local heading_length = 20
-	-- local current_heading_end_x = ship_pos.x + camera_heading_dir.x * heading_length
-	-- local current_heading_end_z = ship_pos.z + camera_heading_dir.z * heading_length
-	-- draw_line_3d(ship_pos.x, ship_pos.y + 3, ship_pos.z, current_heading_end_x, ship_pos.y + 3, current_heading_end_z, camera, 12)  -- Bright magenta
-
-	-- -- Draw camera heading direction visualization when locked to target
-	-- if selected_target  then
-		
-	-- 	local sat_pos = satellite_pos
-
-	-- 	-- Draw line from ship to satellite (target line)
-	-- 	draw_line_3d(ship_pos.x, ship_pos.y, ship_pos.z, sat_pos.x, sat_pos.y, sat_pos.z, camera, 11)
-
-	-- 	-- Draw camera current heading direction (from ship in camera heading direction)
-
-	-- 	-- Draw camera target heading direction (to satellite direction)
-	-- 	local target_heading_end_x = ship_pos.x + camera_target_heading_dir.x * heading_length
-	-- 	local target_heading_end_z = ship_pos.z + camera_target_heading_dir.z * heading_length
-	-- 	draw_line_3d(ship_pos.x, ship_pos.y + 2, ship_pos.z, target_heading_end_x, ship_pos.y + 2, target_heading_end_z, camera, 10)  -- Bright yellow
-	-- end
+	-- ========================================
+	-- UI (Draw last)
+	-- ========================================
 
 	-- Draw speed slider (check mission config for show_progress_slider flag)
 	local show_progress_slider = mission_config and mission_config.show_progress_slider ~= false
@@ -3149,16 +3161,23 @@ function _draw()
 		print("auto", toggle_x + 15, toggle_y + 1, 7)
 	end
 
-	-- Draw weapon effects (beams, explosions, smoke)
-	local utilities = {
-		draw_line_3d = draw_line_3d,
-		project_to_screen = project_point,
-		Renderer = Renderer,
-	}
-	WeaponEffects.draw(camera, utilities)
+	-- Draw destination marker for current mission (mission UI now part of weapons panel)
+	if game_state == "playing" then
+		local mission_dest = Missions.get_current_mission()
+		if mission_dest and mission_dest.destination then
+			Missions.draw_destination_marker(mission_dest.destination, camera, draw_line_3d)
+		end
+	end
 
 	-- Draw weapons UI
 	WeaponsUI.draw_weapons(energy_system, selected_weapon, weapon_states, Config, mx, my, ship_pos, ship_heading_dir, current_selected_target, WeaponEffects, ShipSystems, camera, draw_line_3d)
+
+	-- CPU usage (drawn via UIRenderer)
+	UIRenderer.draw_cpu_stats()
+
+	-- ========================================
+	-- DEBUG (Draw after UI)
+	-- ========================================
 
 	-- Debug weapons UI hitboxes
 	if (Config.debug) then
@@ -3172,17 +3191,6 @@ function _draw()
 		end
 		print("mx: " .. mx .. " my: " .. my, 320 - 50, 10, 7)
 	end
-
-	-- Draw destination marker for current mission (mission UI now part of weapons panel)
-	if game_state == "playing" then
-		local mission_dest = Missions.get_current_mission()
-		if mission_dest and mission_dest.destination then
-			Missions.draw_destination_marker(mission_dest.destination, camera, draw_line_3d)
-		end
-	end
-
-	-- CPU usage (drawn via UIRenderer)
-	UIRenderer.draw_cpu_stats()
 
 	if (Config.debug) then
 		-- Camera angles display
@@ -3309,34 +3317,73 @@ function _draw()
 		end
 	end
 
-	-- Draw velocity lines on top of everything (stationary in world space)
-	-- Reset drawing state to ensure lines render with correct colors
-	fillp()
-	palt()
+	-- Draw weapon effects (beams, explosions, smoke)
+	local utilities = {
+		draw_line_3d = draw_line_3d,
+		project_to_screen = project_point,
+		Renderer = Renderer,
+	}
+	WeaponEffects.draw(camera, utilities)
 
-	for _, line_segment in ipairs(particle_trails) do
-		-- Calculate distance from ship to line start point
-		local dx = line_segment.x1 - Config.ship.position.x
-		local dy = line_segment.y1 - Config.ship.position.y
-		local dz = line_segment.z1 - Config.ship.position.z
-		local dist_from_ship = sqrt(dx * dx + dy * dy + dz * dz)
+	-- Draw heading compass (arc, heading lines) when ship is moving or turning
+	-- Calculate angle difference to see if we need to draw the compass
+	local angle_diff = angle_difference(ship_heading_dir, target_heading_dir)
 
-		-- Color based on distance from ship using discrete palette
-		-- Palette: {28, 12, 7, 6, 13, 1} from closest to farthest
-		local palette = Config.particles.color_palette
-		local palette_size = #palette
-		local max_dist = Config.particles.max_dist
+	-- Draw heading arc using ArcUI module
+	local utilities = {
+		draw_line_3d = draw_line_3d,
+		dir_to_quat = dir_to_quat,
+		quat_to_dir = quat_to_dir
+	}
+	ArcUI.draw_heading_arc(ship_heading_dir, target_heading_dir, angle_diff, camera, Config, utilities)
 
-		-- Map distance to palette index (0-1 normalized, then to palette index)
-		local dist_factor = min(1, max(0, dist_from_ship / max_dist))
-		local palette_index = flr(dist_factor * palette_size) + 1
-		palette_index = min(palette_size, palette_index)
+	-- Draw Grabon firing arc visualization when selected and firing arcs are enabled
+	if current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position and Config.show_firing_arcs then
+		local grabon_pos = current_selected_target.position
+		local grabon_ai = current_selected_target.config.ai
+		if grabon_ai then
+			-- Draw the firing arc for Grabon
+			local grabon_dir = {x = sin(current_selected_target.heading), z = cos(current_selected_target.heading)}
 
-		local color = palette[palette_index]
+			-- Check if player is in range and in firing arc (green if valid, red otherwise)
+			local in_range = ShipSystems.is_in_range(grabon_pos, ship_pos, grabon_ai.attack_range)
+			local in_arc = ShipSystems.is_in_firing_arc(grabon_pos, grabon_dir, ship_pos, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end)
+			local arc_color = (in_range and in_arc) and 11 or 8  -- Green (11) if valid firing position, red (8) otherwise
 
-		-- Draw the velocity line (draws on top of model since it's after model rendering)
-		draw_line_3d(line_segment.x1, line_segment.y1, line_segment.z1,
-		             line_segment.x2, line_segment.y2, line_segment.z2, camera, color)
+			WeaponEffects.draw_firing_arc(grabon_pos, grabon_dir, grabon_ai.attack_range, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end, camera, draw_line_3d, arc_color)
+		end
+	end
+
+	-- Draw physics debug wireframes if enabled
+	if Config.debug_physics and ship_pos then
+		-- Draw ship collider wireframe
+		local ship_collider = Config.ship.collider
+		local ship_box_min_x = ship_pos.x - ship_collider.half_size.x
+		local ship_box_min_y = ship_pos.y - ship_collider.half_size.y
+		local ship_box_min_z = ship_pos.z - ship_collider.half_size.z
+		local ship_box_max_x = ship_pos.x + ship_collider.half_size.x
+		local ship_box_max_y = ship_pos.y + ship_collider.half_size.y
+		local ship_box_max_z = ship_pos.z + ship_collider.half_size.z
+		draw_box_wireframe(ship_box_min_x, ship_box_min_y, ship_box_min_z,
+		                   ship_box_max_x, ship_box_max_y, ship_box_max_z, camera, 3)  -- Cyan box
+
+		-- Draw planet collider wireframe using DebugRenderer
+		local planet_collider = Config.planet.collider
+		local planet_pos = Config.planet.position
+		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
+
+		-- Draw bounding boxes for all spawned spheres
+		for _, sphere_pos in ipairs(spawned_spheres) do
+			local s = 0.5  -- half-size
+			local quad_min_x = sphere_pos.x - s
+			local quad_min_y = sphere_pos.y - s
+			local quad_min_z = sphere_pos.z - s
+			local quad_max_x = sphere_pos.x + s
+			local quad_max_y = sphere_pos.y + s
+			local quad_max_z = sphere_pos.z + s
+			draw_box_wireframe(quad_min_x, quad_min_y, quad_min_z,
+			                   quad_max_x, quad_max_y, quad_max_z, camera, 8)  -- Red box
+		end
 	end
 
 	-- Draw 2D selection boxes for satellites and Grabon
@@ -3400,38 +3447,6 @@ function _draw()
 				local label_y = max_screen_y + 3  -- Below the box
 				print(distance_text, label_x, label_y, box_color)
 			end
-		end
-	end
-
-	-- Draw physics debug wireframes if enabled
-	if Config.debug_physics and ship_pos then
-		-- Draw ship collider wireframe
-		local ship_collider = Config.ship.collider
-		local ship_box_min_x = ship_pos.x - ship_collider.half_size.x
-		local ship_box_min_y = ship_pos.y - ship_collider.half_size.y
-		local ship_box_min_z = ship_pos.z - ship_collider.half_size.z
-		local ship_box_max_x = ship_pos.x + ship_collider.half_size.x
-		local ship_box_max_y = ship_pos.y + ship_collider.half_size.y
-		local ship_box_max_z = ship_pos.z + ship_collider.half_size.z
-		draw_box_wireframe(ship_box_min_x, ship_box_min_y, ship_box_min_z,
-		                   ship_box_max_x, ship_box_max_y, ship_box_max_z, camera, 3)  -- Cyan box
-
-		-- Draw planet collider wireframe using DebugRenderer
-		local planet_collider = Config.planet.collider
-		local planet_pos = Config.planet.position
-		DebugRenderer.draw_sphere_wireframe(draw_line_3d, planet_pos.x, planet_pos.y, planet_pos.z, planet_collider.radius, camera, 11)  -- Yellow sphere
-
-		-- Draw bounding boxes for all spawned spheres
-		for _, sphere_pos in ipairs(spawned_spheres) do
-			local s = 0.5  -- half-size
-			local quad_min_x = sphere_pos.x - s
-			local quad_min_y = sphere_pos.y - s
-			local quad_min_z = sphere_pos.z - s
-			local quad_max_x = sphere_pos.x + s
-			local quad_max_y = sphere_pos.y + s
-			local quad_max_z = sphere_pos.z + s
-			draw_box_wireframe(quad_min_x, quad_min_y, quad_min_z,
-			                   quad_max_x, quad_max_y, quad_max_z, camera, 8)  -- Red box
 		end
 	end
 
@@ -3515,17 +3530,6 @@ function _draw()
 			local name_x = bar_x + (bar_width / 2) - (#target_name * 2)
 			local name_y = bar_y + bar_height + 2
 			print(target_name, name_x, name_y, 11)  -- Bright color for name
-		end
-	end
-
-	-- Draw Grabon firing arc visualization when selected and firing arcs are enabled
-	if current_selected_target and current_selected_target.type == "grabon" and current_selected_target.position and Config.show_firing_arcs then
-		local grabon_pos = current_selected_target.position
-		local grabon_ai = current_selected_target.config.ai
-		if grabon_ai then
-			-- Draw the firing arc for Grabon
-			local grabon_dir = {x = math.sin(current_selected_target.heading * 2 * math.pi), z = math.cos(current_selected_target.heading * 2 * math.pi)}
-			WeaponEffects.draw_firing_arc(grabon_pos, grabon_dir, grabon_ai.attack_range, grabon_ai.firing_arc_start, grabon_ai.firing_arc_end, camera, draw_line_3d, 8)  -- Red color (8)
 		end
 	end
 
