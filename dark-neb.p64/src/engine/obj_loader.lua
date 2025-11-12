@@ -1,7 +1,13 @@
 -- OBJ File Loader for Picotron
 -- Loads .obj files directly into the mesh format used by the 3D engine
+-- @param filepath: path to the .obj file
+-- @param sprite_w: sprite width in pixels (default 16)
+-- @param sprite_h: sprite height in pixels (default 16)
 
-local function load_obj(filepath)
+local function load_obj(filepath, sprite_w, sprite_h)
+	sprite_w = sprite_w or 16
+	sprite_h = sprite_h or 16
+
 	local verts = {}
 	local uvs = {}
 	local faces = {}
@@ -35,9 +41,9 @@ local function load_obj(filepath)
 				local coords = split(sub(line, 4), " ", false)
 				local u = tonum(coords[1]) or 0
 				local v = tonum(coords[2]) or 0
-				-- Convert UV from 0-1 range to 0-16 range (Picotron sprite coordinates)
+				-- Convert UV from 0-1 range to sprite pixel coordinates
 				-- Flip V coordinate to match texture orientation
-				add(uvs, vec(u * 16, (1 - v) * 16))
+				add(uvs, vec(u * sprite_w, (1 - v) * sprite_h))
 
 			-- Face line (f v1 v2 v3 or f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3)
 			elseif sub(line, 1, 2) == "f " then
@@ -73,8 +79,8 @@ local function load_obj(filepath)
 						idx3 = v_indices[2]
 
 						uv1 = (vt_indices[1] and uvs[vt_indices[1]]) or vec(0, 0)
-						uv2 = (vt_indices[3] and uvs[vt_indices[3]]) or vec(16, 16)
-						uv3 = (vt_indices[2] and uvs[vt_indices[2]]) or vec(16, 0)
+						uv2 = (vt_indices[3] and uvs[vt_indices[3]]) or vec(sprite_w, sprite_h)
+						uv3 = (vt_indices[2] and uvs[vt_indices[2]]) or vec(sprite_w, 0)
 					else
 						-- Fan triangulation: v0, v[i+2], v[i+1]
 						idx1 = v_indices[1]
@@ -82,8 +88,8 @@ local function load_obj(filepath)
 						idx3 = v_indices[i + 2]
 
 						uv1 = (vt_indices[1] and uvs[vt_indices[1]]) or vec(0, 0)
-						uv2 = (vt_indices[i + 3] and uvs[vt_indices[i + 3]]) or vec(16, 16)
-						uv3 = (vt_indices[i + 2] and uvs[vt_indices[i + 2]]) or vec(0, 16)
+						uv2 = (vt_indices[i + 3] and uvs[vt_indices[i + 3]]) or vec(sprite_w, sprite_h)
+						uv3 = (vt_indices[i + 2] and uvs[vt_indices[i + 2]]) or vec(0, sprite_h)
 					end
 
 					add(faces, {

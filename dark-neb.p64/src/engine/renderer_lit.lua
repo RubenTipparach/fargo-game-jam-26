@@ -126,6 +126,7 @@ end
 -- @param brightness_level: 0-7 (0=darkest, 7=brightest)
 -- @param mask_offset: optional offset to add to mask selection (for debug visualization)
 -- @return sprite_index: index of the cached brightness sprite
+-- Note: Automatically checks sprite_id+1 for emissive map (pixels with color 7 won't be remapped)
 function RendererLit.get_brightness_sprite(sprite_id, brightness_level, mask_offset)
 	-- Ensure color table is loaded
 	if not base_color_table then
@@ -138,10 +139,17 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level, mask_off
 	if brightness_level < 0 then brightness_level = 0 end
 	if brightness_level >= BRIGHTNESS_LEVELS then brightness_level = BRIGHTNESS_LEVELS - 1 end
 
-	-- Create unique cache key when using mask offset
+	-- Check for emissive map at sprite_id + 1
+	local emissive_map_id = sprite_id + 1
+	local has_emissive = get_spr(emissive_map_id) ~= nil
+
+	-- Create unique cache key when using mask offset and/or emissive map
 	local cache_key = brightness_level
 	if mask_offset ~= 0 then
 		cache_key = brightness_level + mask_offset * 100  -- Offset by 100s to keep cache separate
+	end
+	if has_emissive then
+		cache_key = cache_key + 10000  -- Offset by 10000 for emissive map presence
 	end
 
 	-- Check cache AFTER clamping
@@ -154,6 +162,13 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level, mask_off
 	if not original_sprite then
 		printh("WARNING: Could not load sprite " .. sprite_id)
 		return sprite_id  -- Return original sprite_id as fallback
+	end
+
+	-- Get emissive map sprite (sprite_id + 1)
+	local emissive_map = nil
+	if has_emissive then
+		emissive_map = get_spr(emissive_map_id)
+		printh("Emissive map found for sprite " .. sprite_id .. " at sprite " .. emissive_map_id)
 	end
 
 	-- Apply color table transformation using 8-level configuration
@@ -198,14 +213,18 @@ function RendererLit.get_brightness_sprite(sprite_id, brightness_level, mask_off
 	for y = 0, sprite_h - 1 do
 		for x = 0, sprite_w - 1 do
 			local c = original_sprite:get(x, y)
-			-- Extract color index from low 6 bits (0x3f mask)
-			-- High 2 bits are color table selection metadata
 			local color_index = c & 0x3f
+
+			-- Check emissive map: if present and pixel is color 7, skip remapping
+			local is_emissive = emissive_map and (emissive_map:get(x, y)) == 7
 
 			-- Colors 0 and 55-63 are reserved/transparent (color table lookup range)
 			if color_index == 0 or color_index >= 55 then
 				-- Keep transparent pixels as 0
 				new_sprite:set(x, y, 0)
+			elseif is_emissive then
+				-- Keep emissive pixels unchanged (don't remap) - use original color
+				new_sprite:set(x, y, c)
 			else
 				-- Look up remapped color from color table (sprite 16)
 				-- Color table format: get(x, y) where:
@@ -404,8 +423,7 @@ function RendererLit.print_cache_stats()
 	printh("Total brightness variants: " .. stats.total_variants)
 	printh("Cache slots used: " .. stats.slots_used .. " / " .. stats.slots_available)
 	printh("Next available slot: " .. stats.next_slot)
-	printh("Memory per sprite: ~256 bytes (16x16)")
-	printh("Total cache memory: ~" .. (stats.slots_used * 256) .. " bytes")
+	printh("Memory per sprite: variable (16x16=256 bytes, 128x128=16384 bytes)")
 	printh("=========================")
 
 	return stats
@@ -435,48 +453,6 @@ function RendererLit.debug_print_sprite(sprite_id, brightness_level)
 	end
 
 	printh("Debug: Sprite " .. sprite_id .. " brightness " .. brightness_level .. " cached at index " .. cache_idx)
-end
-
--- Generate 8-level brightness sprite for comparison (old math)
--- @param sprite_id: the original sprite index
--- @param brightness_level: 0-7 (0=darkest, 7=brightest)
--- @return sprite userdata directly (not cached)
-function RendererLit.get_brightness_sprite_8level(sprite_id, brightness_level)
-	-- Ensure color table is loaded
-	if not base_color_table then
-		RendererLit.init_color_table()
-	end
-
-	-- Get original sprite
-	local original_sprite = get_spr(sprite_id)
-	if not original_sprite then
-		return get_spr(sprite_id)
-	end
-
-	-- Create new sprite userdata (16x16)
-	local new_sprite = userdata("u8", 16, 16)
-	for y = 0, 15 do
-		for x = 0, 15 do
-			new_sprite:set(x, y, 0)
-		end
-	end
-
-	-- Apply color table transformation using 8-level configuration
-	local config = colorMapper8[brightness_level + 1]  -- Lua is 1-indexed
-
-	-- All 8 levels use a single row from the color table
-	for y = 0, 15 do
-		for x = 0, 15 do
-			local c = original_sprite:get(x, y)
-			if c == 0 or (c >= 56 and c <= 63) then
-				new_sprite:set(x, y, c)
-			else
-				new_sprite:set(x, y, base_color_table:get(c, config.mask))
-			end
-		end
-	end
-
-	return new_sprite
 end
 
 -- ============================================

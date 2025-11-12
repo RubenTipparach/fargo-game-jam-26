@@ -114,7 +114,7 @@ function ShipSystems.calculate_rotation(current_heading_dir, target_heading_dir,
 	end
 
 	-- Only rotate if not already at target (tolerance: 0.0001 turns)
-	if abs(angle_diff) > 0.0001 then
+	if abs(angle_diff) > 0.001 then
 		-- Always rotate at constant turn_rate
 		-- Determine direction: positive or negative
 		local rotation_amount = angle_diff > 0 and turn_rate or -turn_rate

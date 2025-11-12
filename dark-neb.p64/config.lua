@@ -35,9 +35,9 @@ Config.stars = {
 -- Camera configuration
 Config.camera = {
 	distance = 30,
-	min_distance = 25,  -- Minimum zoom distance
+	min_distance = 10,  -- Minimum zoom distance
 	max_distance = 100,  -- Maximum zoom distance
-	height = 6,  -- Camera elevation above ground (y position of focus point)
+	height = 5,  -- Camera elevation above ground (y position of focus point)
 	rx = 0.05,  -- Initial rotation X (0.25 = looking straight down)
 	ry = -0.36,  -- Initial rotation Y
 	orbit_sensitivity = 0.01,  -- Mouse orbit speed
@@ -50,7 +50,9 @@ Config.ship = {
 	position = {x = 0, y = 0, z = 0},
 	rotation = {pitch = 0, yaw = 0, roll = 0},
 	model_file = "models/shippy1.obj",
-	sprite_id = 5,  -- Ship texture sprite
+	sprite_id = 33,  -- Ship texture sprite (128x128 pixels, emissive map at sprite 34)
+	sprite_w = 128,  -- Sprite width in pixels
+	sprite_h = 128,  -- Sprite height in pixels
 	speed = 0,  -- Current ship speed (0-1)
 	max_speed = 1,  -- Maximum speed value
 	speed_smoothing = 0.005,  -- Speed interpolation smoothing

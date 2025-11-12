@@ -949,10 +949,20 @@ function _init()
 		Config,
 		{
 			on_restart = function()
-				-- Return to menu without restarting
+				-- Return to menu and reset game state fully
 				game_state = "menu"
 				is_dead = false
 				death_time = 0
+				out_of_bounds_time = 0
+				is_out_of_bounds = false
+
+				-- Reset missions (important to clear progress)
+				Missions.init(Config)
+
+				-- Skip the next menu click to prevent immediately starting a mission
+				skip_next_menu_click = true
+
+				-- Will be properly initialized when player selects a mission
 			end,
 			on_menu = function()
 				game_state = "menu"
@@ -984,7 +994,7 @@ function _init()
 
 	-- Try to load the shippy model (from config)
 	local load_obj = require("src.engine.obj_loader")
-	model_shippy = load_obj(Config.ship.model_file)
+	model_shippy = load_obj(Config.ship.model_file, Config.ship.sprite_w, Config.ship.sprite_h)
 
 	if model_shippy then
 		printh("Shippy loaded: " .. #model_shippy.verts .. " vertices, " .. #model_shippy.faces .. " faces")
@@ -1567,8 +1577,11 @@ function _update()
 				function() return enemy.position end  -- Return position reference, not a copy
 			)
 		end
-		return  -- Skip gameplay updates while in menu
+		return  -- Skip gameplay updates when starting new mission
 	end  -- Close if Menu.update(...)
+
+	-- Skip all gameplay updates while in menu
+	return
 	end  -- Close if game_state == "menu"
 
 	-- Cache ship position at start of update
@@ -1610,13 +1623,13 @@ function _update()
 	local button_held = (mb & 1 == 1)
 
 	if button_held then  -- Left mouse button
-		if over_slider then
-			-- Drag slider
+		if game_state == "playing" and over_slider then
+			-- Drag slider (only during gameplay)
 			slider_dragging = true
 			-- Calculate desired speed from mouse Y position
 			local slider_pos = mid(0, (my - slider_y) / slider_height, 1)
 			slider_speed_desired = (1 - slider_pos)  -- Inverted (top = max speed)
-		elseif over_energy_ui and button_pressed then
+		elseif game_state == "playing" and over_energy_ui and button_pressed then
 			-- Handle energy block clicks ONLY on initial press, not while held
 			build_energy_hitboxes()
 			handle_energy_clicks(mx, my)
@@ -1632,7 +1645,8 @@ function _update()
 			elseif WeaponsUI.is_show_arcs_toggle_clicked(mx, my) then
 				Config.show_firing_arcs = not Config.show_firing_arcs
 				printh("Show firing arcs: " .. (Config.show_firing_arcs and "ON" or "OFF"))
-			else
+			elseif game_state == "playing" then
+				-- Only allow weapon firing during gameplay
 				-- Check for weapon selection clicks on main button
 				local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
 				if weapon_id then
@@ -1780,8 +1794,8 @@ function _update()
 		end
 	end
 
-	-- Right-click to set ship heading or select satellite/Grabon target
-	if mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
+	-- Right-click to set ship heading or select satellite/Grabon target (only during gameplay)
+	if game_state == "playing" and mb & 2 == 2 and not (mb & 1 == 1) then  -- Right mouse button only (not both)
 		-- If satellite or Grabon is hovered, select it as target instead of setting heading
 		if hovered_target and (hovered_target.type == "satellite" or hovered_target.type == "grabon") then
 			current_selected_target = hovered_target
@@ -1813,8 +1827,8 @@ function _update()
 		end
 	end
 
-	-- Mobile controls: Z button (button 4) to cycle through enemies
-	if btnp(4) then  -- Z button / button 4
+	-- Mobile controls: Z button (button 4) to cycle through enemies (only during gameplay)
+	if game_state == "playing" and btnp(4) then  -- Z button / button 4
 		-- Get list of valid targets (satellites and grabons that are not destroyed)
 		local valid_targets = {}
 		for _, enemy in ipairs(enemy_ships) do
@@ -1844,28 +1858,28 @@ function _update()
 		end
 	end
 
-	-- Mobile controls: Arrow keys (buttons 0/1) to rotate ship
-	--if not Config.debug_lighting then  -- Only when not in debug mode
-	if btn(1) then  -- Left arrow / button 0
-		-- Rotate left: rotate the current heading left
-		local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
-		local new_angle = current_angle - Config.ship.arrow_key_rotation_speed  -- Rotate counter-clockwise
-		target_heading_dir = {
-			x = cos(new_angle),
-			z = sin(new_angle)
-		}
-	end
+	-- Mobile controls: Arrow keys (buttons 0/1) to rotate ship (only during gameplay)
+	if game_state == "playing" then
+		if btn(1) then  -- Left arrow / button 0
+			-- Rotate left: rotate the current heading left
+			local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
+			local new_angle = current_angle - Config.ship.arrow_key_rotation_speed  -- Rotate counter-clockwise
+			target_heading_dir = {
+				x = cos(new_angle),
+				z = sin(new_angle)
+			}
+		end
 
-	if btn(0) then  -- Right arrow / button 1
-		-- Rotate right: rotate the current heading right
-		local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
-		local new_angle = current_angle + Config.ship.arrow_key_rotation_speed  -- Rotate clockwise
-		target_heading_dir = {
-			x = cos(new_angle),
-			z = sin(new_angle)
-		}
+		if btn(0) then  -- Right arrow / button 1
+			-- Rotate right: rotate the current heading right
+			local current_angle = atan2(target_heading_dir.x, target_heading_dir.z)
+			local new_angle = current_angle + Config.ship.arrow_key_rotation_speed  -- Rotate clockwise
+			target_heading_dir = {
+				x = cos(new_angle),
+				z = sin(new_angle)
+			}
+		end
 	end
-	--end
 
 	-- WASD controls for light rotation (only when debug_lighting is enabled)
 	if Config.debug_lighting then
@@ -2016,10 +2030,11 @@ function _update()
 		end
 	end
 
-	-- Handle auto-fire for weapons with auto-fire enabled
-	for i = 1, #Config.weapons do
-		local state = weapon_states[i]
-		if state.auto_fire and is_weapon_ready(i, current_selected_target) then
+	-- Handle auto-fire for weapons with auto-fire enabled (only during gameplay)
+	if game_state == "playing" then
+		for i = 1, #Config.weapons do
+			local state = weapon_states[i]
+			if state.auto_fire and is_weapon_ready(i, current_selected_target) then
 			-- printh("FIRE CHECK: Weapon " .. i .. " is ready!")
 			-- Fire the weapon
 			local target_pos = nil
@@ -2060,6 +2075,7 @@ function _update()
 				end
 			end
 		end
+	end
 	end
 
 	-- MUST BE HERE TO ALLOW DEBUG DRAW TO WORK
@@ -2179,7 +2195,7 @@ function _update()
 	end
 
 	-- Only rotate if not already at target (tolerance: 0.0001 turns)
-	if abs(angle_diff) > 0.0001 then
+	if abs(angle_diff) > 0.001 then
 		-- Always rotate at constant turn_rate
 		-- Determine direction: positive or negative
 		local rotation_amount = angle_diff > 0 and Config.ship.turn_rate or -Config.ship.turn_rate
@@ -2193,7 +2209,7 @@ function _update()
 
 		-- Normalize to ensure unit vector (handle floating point drift)
 		local len = sqrt(ship_heading_dir.x * ship_heading_dir.x + ship_heading_dir.z * ship_heading_dir.z)
-		if len > 0.0001 then
+		if len > 1 then
 			ship_heading_dir.x = ship_heading_dir.x / len
 			ship_heading_dir.z = ship_heading_dir.z / len
 		end
@@ -2325,6 +2341,10 @@ function _update()
 			player_health_obj.current_health = current_health
 			is_dead = true
 			death_time = 0
+			game_state = "game_over"
+
+			-- Stop music when player dies
+			music(-1)
 
 		-- Spawn explosion at ship position
 		if Config.explosion.enabled then
@@ -2335,8 +2355,8 @@ function _update()
 		end
 	end
 
-	-- Update Grabon AI for Mission 3 and Mission 4
-	if Missions.get_current_mission().id == 3 or Missions.get_current_mission().id == 4 then
+	-- Update Grabon AI only during active gameplay
+	if game_state == "playing" and (Missions.get_current_mission().id == 3 or Missions.get_current_mission().id == 4) then
 		update_grabon_ai()
 	end
 
@@ -2408,6 +2428,11 @@ function _update()
 					if current_health <= 0 then
 						is_dead = true
 						death_time = 0
+						game_state = "game_over"
+
+						-- Stop music when player dies
+						music(-1)
+
 						-- Spawn explosion at ship position when player dies
 						if Config.explosion.enabled then
 							table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
@@ -2781,7 +2806,7 @@ function _draw()
 		local shippy_faces = RendererLit.render_mesh(
 			model_shippy.verts, model_shippy.faces, camera,
 			ship_pos.x, ship_pos.y, ship_pos.z,
-			Config.ship.sprite_id,  -- sprite override (use sprite from config = sprite 5)
+			Config.ship.sprite_id,  -- sprite override (use sprite from config)
 			light_dir,  -- light direction (directional light)
 			nil,  -- light radius (unused for directional)
 			light_brightness,  -- light brightness
@@ -3094,7 +3119,7 @@ function _draw()
 	end
 
 	-- Death screen (with 2 second delay before showing)
-	if is_dead then
+	if is_dead and game_state == "game_over" then
 		death_time = death_time + (1 / 60)  -- Add one frame's worth of time
 
 		if death_time >= Config.health.death_screen_delay then
