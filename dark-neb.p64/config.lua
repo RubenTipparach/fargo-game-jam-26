@@ -4,7 +4,7 @@
 local Config = {}
 
 -- Debug flags
-Config.debug = true  -- General debug info (lights, sprites, etc)
+Config.debug = false  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = false  -- Always show CPU stats
 Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
