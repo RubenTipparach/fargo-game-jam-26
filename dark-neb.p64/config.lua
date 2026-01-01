@@ -1,10 +1,10 @@
---[[pod_format="raw",created="2024-11-08 00:00:00",modified="2024-11-08 00:00:00",revision=0]]
+--[[pod_format="raw",created="2024-11-08 00:00:00",modified="2025-12-11 07:58:22",revision=2]]
 -- Game Configuration
 
 local Config = {}
 
 -- Debug flags
-Config.debug = false  -- General debug info (lights, sprites, etc)
+Config.debug = true  -- General debug info (lights, sprites, etc)
 Config.debug_lighting = false  -- Show only lighting arrow and rotation values
 Config.show_cpu = false  -- Always show CPU stats
 Config.debug_physics = false  -- Show physics bounding boxes and collision wireframes
