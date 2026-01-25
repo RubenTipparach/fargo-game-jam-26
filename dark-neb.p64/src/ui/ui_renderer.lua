@@ -224,4 +224,93 @@ function UIRenderer.get_buttons()
 	}
 end
 
+-- Get narrative lines for mission success based on mission id
+local function get_mission_narrative(mission_id)
+	if mission_id == 2 then
+		return {
+			"", "Excellent work, cadet!", "",
+			"You've graduated top of your class",
+			"with incredible fanfare from your",
+			"peers and teachers alike.", "",
+			"You have a bright future ahead of you.",
+		}
+	elseif mission_id == 3 then
+		return {
+			"", "Outstanding, Captain!", "",
+			"Your maiden voyage was a complete",
+			"success. You've proven yourself in",
+			"real combat against a hostile Grabon.", "",
+			"Your crew looks to you with confidence.",
+			"This is only the beginning of your",
+			"journey among the stars.",
+		}
+	elseif mission_id == 4 then
+		return {
+			"", "Incredible, Captain!", "",
+			"You've successfully defeated",
+			"overwhelming odds!", "",
+			"Two enemy Grabons destroyed against",
+			"a single ship. Your tactical prowess",
+			"is unmatched.", "",
+			"Command will remember this victory.",
+		}
+	else
+		return {
+			"", "Congratulations, cadet!", "",
+			"Your instructors at the Academy were",
+			"deeply impressed by your performance.",
+			"You've successfully completed your",
+			"first year of training.", "",
+			"However, be warned: the next year",
+			"will be far more challenging.",
+		}
+	end
+end
+
+-- Draw mission success screen
+-- @param mission_id: Current mission id
+-- @param mx, my: Mouse position
+-- @param mb: Mouse buttons
+-- @return: true if OK button was clicked
+function UIRenderer.draw_mission_success(mission_id, mx, my, mb)
+	cls(0)
+
+	-- Title
+	local title = "Mission Success!!!"
+	local title_x = 240 - (#title * 2)
+	print(title, title_x - 1, 50, 0)
+	print(title, title_x, 49, 11)
+
+	-- Narrative text
+	local narrative_lines = get_mission_narrative(mission_id)
+	local text_y = 75
+	for _, line in ipairs(narrative_lines) do
+		local text_x = 240 - (#line * 2)
+		print(line, text_x, text_y, 7)
+		text_y = text_y + 8
+	end
+
+	-- OK button
+	local button_y = 180
+	local button_width = 50
+	local button_height = 15
+	local button_x = 240 - (button_width / 2)
+
+	local button_hovered = mx and my and
+		mx >= button_x and mx <= button_x + button_width and
+		my >= button_y and my <= button_y + button_height
+
+	rectfill(button_x, button_y, button_x + button_width, button_y + button_height, button_hovered and 5 or 0)
+	rect(button_x, button_y, button_x + button_width, button_y + button_height, button_hovered and 10 or 7)
+
+	local button_text = "OK"
+	local button_text_x = button_x + (button_width - (#button_text * 4)) / 2
+	local button_text_y = button_y + (button_height - 6) / 2
+	print(button_text, button_text_x, button_text_y, 7)
+
+	-- Check for button click or keyboard input
+	local ok_clicked = ((mb & 1) == 1 and button_hovered) or keyp("return") or keyp("z")
+	return ok_clicked
+end
+
 return UIRenderer

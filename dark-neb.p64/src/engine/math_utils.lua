@@ -143,4 +143,179 @@ function MathUtils.clamp(value, min_val, max_val)
 	return value
 end
 
+-- ============================================
+-- DIRECTION/ANGLE CONVERSION (XZ Plane)
+-- ============================================
+
+-- Convert 2D direction vector to angle (in turns, 0-1 range)
+-- @param dir: {x, z} direction vector on XZ plane
+-- @return: Angle in turns (0-1 range, 0 = +Z direction)
+function MathUtils.dir_to_angle(dir)
+	return atan2(dir.x, dir.z)
+end
+
+-- Convert angle to 2D direction vector
+-- @param angle: Angle in turns (0-1 range)
+-- @return: {x, z} direction vector on XZ plane
+function MathUtils.angle_to_dir(angle)
+	return {x = cos(angle), z = sin(angle)}
+end
+
+-- Calculate shortest angular difference between two directions
+-- @param dir1, dir2: {x, z} direction vectors
+-- @return: Absolute angle difference in turns (0-0.5 range)
+function MathUtils.angle_difference(dir1, dir2)
+	local angle1 = MathUtils.dir_to_angle(dir1)
+	local angle2 = MathUtils.dir_to_angle(dir2)
+
+	local diff = angle2 - angle1
+	if diff > 0.5 then
+		diff = diff - 1
+	elseif diff < -0.5 then
+		diff = diff + 1
+	end
+
+	return abs(diff)
+end
+
+-- Update heading direction toward target at constant turn rate
+-- @param current_dir: {x, z} current direction
+-- @param target_dir: {x, z} target direction
+-- @param turn_rate: Turn rate in turns per frame
+-- @return: {x, z} new direction after applying rotation
+function MathUtils.update_heading(current_dir, target_dir, turn_rate)
+	local current_angle = MathUtils.dir_to_angle(current_dir)
+	local target_angle = MathUtils.dir_to_angle(target_dir)
+
+	-- Calculate shortest angular difference
+	local angle_diff = target_angle - current_angle
+	if angle_diff > 0.5 then
+		angle_diff = angle_diff - 1
+	elseif angle_diff < -0.5 then
+		angle_diff = angle_diff + 1
+	end
+
+	-- Check if already at target
+	if abs(angle_diff) < 0.001 then
+		return {x = current_dir.x, z = current_dir.z}
+	end
+
+	-- Apply rotation at constant rate
+	local rotation_amount = angle_diff > 0 and turn_rate or -turn_rate
+	local new_angle = current_angle + rotation_amount
+
+	-- Convert back to direction
+	local new_dir = {
+		x = cos(new_angle),
+		z = sin(new_angle)
+	}
+
+	-- Normalize to handle floating point drift
+	local len = sqrt(new_dir.x * new_dir.x + new_dir.z * new_dir.z)
+	if len > 0.0001 then
+		new_dir.x = new_dir.x / len
+		new_dir.z = new_dir.z / len
+	end
+
+	return new_dir
+end
+
+-- ============================================
+-- QUATERNION OPERATIONS (Y-Axis Rotation)
+-- ============================================
+
+-- Convert 2D direction vector to quaternion (rotation around Y axis)
+-- @param dir: {x, z} direction vector
+-- @return: {w, x, y, z} quaternion
+function MathUtils.dir_to_quat(dir)
+	local len = sqrt(dir.x * dir.x + dir.z * dir.z)
+	if len < 0.0001 then
+		return {w = 1, x = 0, y = 0, z = 0}
+	end
+
+	local norm_x = dir.x / len
+	local norm_z = dir.z / len
+
+	local cos_theta = norm_z
+	local sin_theta = norm_x
+
+	local half_cos = sqrt((1 + cos_theta) / 2)
+	local half_sin = (sin_theta >= 0 and 1 or -1) * sqrt((1 - cos_theta) / 2)
+
+	return {
+		w = half_cos,
+		x = 0,
+		y = half_sin,
+		z = 0
+	}
+end
+
+-- Convert quaternion back to 2D direction vector
+-- @param q: {w, x, y, z} quaternion
+-- @return: {x, z} direction vector
+function MathUtils.quat_to_dir(q)
+	local x = 2 * (q.x * q.z + q.w * q.y)
+	local z = 1 - 2 * (q.x * q.x + q.y * q.y)
+
+	local len = sqrt(x * x + z * z)
+	if len > 0.0001 then
+		x = x / len
+		z = z / len
+	end
+
+	return {x = x, z = z}
+end
+
+-- Quaternion SLERP with max turn rate
+-- @param q1, q2: Quaternions to interpolate between
+-- @param max_turn_rate: Maximum rotation in turns per step
+-- @return: Interpolated quaternion
+function MathUtils.quat_slerp(q1, q2, max_turn_rate)
+	local dot = q1.w * q2.w + q1.x * q2.x + q1.y * q2.y + q1.z * q2.z
+
+	-- Take shorter path
+	if dot < 0 then
+		q2 = {w = -q2.w, x = -q2.x, y = -q2.y, z = -q2.z}
+		dot = -dot
+	end
+
+	if dot > 1 then dot = 1 end
+	if dot < -1 then dot = -1 end
+
+	local theta = atan2(sqrt(1 - dot * dot), dot)
+
+	if theta > max_turn_rate then
+		theta = max_turn_rate
+	end
+
+	local full_theta = atan2(sqrt(1 - dot * dot), dot)
+
+	if full_theta < 0.00001 then
+		return {w = q1.w, x = q1.x, y = q1.y, z = q1.z}
+	end
+
+	local t = theta / full_theta
+
+	local sin_full = sin(full_theta)
+	if abs(sin_full) < 0.0001 then
+		-- Linear interpolation fallback
+		local result_w = q1.w + t * (q2.w - q1.w)
+		local result_x = q1.x + t * (q2.x - q1.x)
+		local result_y = q1.y + t * (q2.y - q1.y)
+		local result_z = q1.z + t * (q2.z - q1.z)
+		local len = sqrt(result_w*result_w + result_x*result_x + result_y*result_y + result_z*result_z)
+		return {w = result_w/len, x = result_x/len, y = result_y/len, z = result_z/len}
+	end
+
+	local a = sin((1 - t) * full_theta) / sin_full
+	local b = sin(t * full_theta) / sin_full
+
+	return {
+		w = a * q1.w + b * q2.w,
+		x = a * q1.x + b * q2.x,
+		y = a * q1.y + b * q2.y,
+		z = a * q1.z + b * q2.z
+	}
+end
+
 return MathUtils

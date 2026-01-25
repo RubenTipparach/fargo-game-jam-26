@@ -7,6 +7,11 @@ local WeaponEffects = {}
 -- Configuration reference (set via setup function)
 local Config = nil
 
+-- Module references (set via setup function)
+local SubsystemManager = nil
+local AISystem = nil
+local SubsystemUI = nil
+
 -- Load particle systems
 local Explosion = require("src.particles.explosion")
 local Smoke = require("src.particles.smoke")
@@ -234,8 +239,15 @@ function Beam:_create_dual_segment_mesh(dx, dy, dz, beam_length, split_distance)
 end
 
 -- Initialize WeaponEffects with config reference
-function WeaponEffects.setup(config)
+-- @param config: Game configuration
+-- @param subsystem_manager: SubsystemManager module (optional)
+-- @param ai_system: AISystem module (optional)
+-- @param subsystem_ui: SubsystemUI module (optional, for flash effects)
+function WeaponEffects.setup(config, subsystem_manager, ai_system, subsystem_ui)
 	Config = config
+	SubsystemManager = subsystem_manager
+	AISystem = ai_system
+	SubsystemUI = subsystem_ui
 end
 
 -- Fire a beam from origin towards target
@@ -262,7 +274,9 @@ end
 -- Spawn explosion at position (also applies damage)
 -- @param pos: {x, y, z} position
 -- @param target: reference to target object (satellite/planet config table)
-function WeaponEffects.spawn_explosion(pos, target)
+-- @param attacker_pos: {x, y, z} position of attacker (optional, for subsystem damage)
+-- @param target_heading: heading in turns (optional, for subsystem damage)
+function WeaponEffects.spawn_explosion(pos, target, attacker_pos, target_heading)
 	-- Create particle-based explosion using the Explosion class
 	local explosion = Explosion.new(pos.x, pos.y, pos.z, {
 		quad_count = 1,
@@ -282,17 +296,39 @@ function WeaponEffects.spawn_explosion(pos, target)
 
 	-- Apply damage to target if it exists
 	if target and target.current_health and target.max_health then
-		target.current_health = target.current_health - EXPLOSION_CONFIG.damage
-		if target.current_health < 0 then
-			target.current_health = 0
+		-- Try subsystem damage if we have attacker position and heading
+		local subsystem_result = nil
+		if SubsystemManager and target.id and attacker_pos and target_heading ~= nil then
+			subsystem_result = SubsystemManager.apply_directional_damage(
+				target.id,
+				pos,
+				target_heading,
+				attacker_pos,
+				EXPLOSION_CONFIG.damage
+			)
+			if subsystem_result then
+				printh("Subsystem hit: " .. subsystem_result.subsystem .. (subsystem_result.destroyed and " DESTROYED" or ""))
+				-- Flash player subsystem UI when hit
+				if SubsystemUI and target.id == "player_ship" then
+					SubsystemUI.flash_subsystem(subsystem_result.subsystem)
+				end
+			end
 		end
 
-		-- Log target health after damage
-		local target_name = target.id or "target"
-		local health_percent = (target.current_health / target.max_health) * 100
-		printh(target_name .. " took damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+		-- If no subsystem hit, apply hull damage
+		if not subsystem_result then
+			target.current_health = target.current_health - EXPLOSION_CONFIG.damage
+			if target.current_health < 0 then
+				target.current_health = 0
+			end
 
-		-- Spawn smoke if target is below 70% health (30% remaining)
+			-- Log target health after damage
+			local target_name = target.id or "target"
+			local health_percent = (target.current_health / target.max_health) * 100
+			printh(target_name .. " took damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+		end
+
+		-- Spawn smoke if target is below 30% health
 		local health_ratio = target.current_health / target.max_health
 		if health_ratio < 0.3 then
 			WeaponEffects.spawn_smoke(pos)
@@ -300,6 +336,65 @@ function WeaponEffects.spawn_explosion(pos, target)
 	end
 
 	return explosion
+end
+
+-- Apply weapon damage with subsystem routing
+-- This is the main entry point for applying damage from weapons
+-- @param attacker_pos: {x, y, z} position of the attacker (for directional damage)
+-- @param target: Target entity with id, position, heading, current_health, max_health
+-- @param damage: Amount of damage to apply (default: EXPLOSION_CONFIG.damage)
+-- @return: {subsystem = name, destroyed = bool} or nil if hull hit
+function WeaponEffects.apply_weapon_damage(attacker_pos, target, damage)
+	if not target or not target.current_health or not target.max_health then
+		return nil
+	end
+
+	damage = damage or EXPLOSION_CONFIG.damage
+
+	-- Try to route damage through subsystem manager if available
+	local subsystem_result = nil
+	if SubsystemManager and target.id and target.position and target.heading ~= nil then
+		subsystem_result = SubsystemManager.apply_directional_damage(
+			target.id,
+			target.position,
+			target.heading,
+			attacker_pos,
+			damage
+		)
+
+		if subsystem_result then
+			printh("Subsystem hit: " .. subsystem_result.subsystem .. (subsystem_result.destroyed and " DESTROYED" or ""))
+			-- Flash player subsystem UI when hit
+			if SubsystemUI and target.id == "player_ship" then
+				SubsystemUI.flash_subsystem(subsystem_result.subsystem)
+			end
+		end
+	end
+
+	-- If no subsystem was hit (or subsystems not set up), apply hull damage
+	if not subsystem_result then
+		target.current_health = target.current_health - damage
+		if target.current_health < 0 then
+			target.current_health = 0
+		end
+
+		local target_name = target.id or "target"
+		local health_percent = (target.current_health / target.max_health) * 100
+		printh(target_name .. " hull damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+	end
+
+	-- Notify AI that this enemy was damaged (triggers reactive behavior)
+	if AISystem and target.type == "grabon" then
+		AISystem.on_enemy_damaged(target, attacker_pos)
+	end
+
+	-- Spawn smoke if target is badly damaged
+	local health_ratio = target.current_health / target.max_health
+	if health_ratio < 0.3 and target.position then
+		WeaponEffects.spawn_smoke(target.position)
+	end
+
+	return subsystem_result
 end
 
 -- Apply collision damage to a target based on armor rating

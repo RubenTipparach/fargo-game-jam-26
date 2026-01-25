@@ -686,4 +686,84 @@ Config.missions = {
 -- Set current mission (default to mission 1)
 Config.current_mission = Config.missions.mission_1
 
+-- Subsystem hitbox configuration
+-- Each ship has 5 subsystems that can be damaged and destroyed
+Config.subsystems = {
+	-- Player ship subsystems
+	player = {
+		weapons = {
+			offset = {x = 0, y = 0, z = 0},  -- Center (covers sides)
+			half_size = {x = 2.5, y = 1, z = 1.5},
+			max_health = 30,
+		},
+		engines = {
+			offset = {x = 0, y = 0, z = -2.5},  -- Rear
+			half_size = {x = 1.5, y = 1, z = 1},
+			max_health = 40,
+		},
+		shields = {
+			offset = {x = 0, y = 0.5, z = 1},  -- Front-top
+			half_size = {x = 1, y = 0.5, z = 1},
+			max_health = 25,
+		},
+		sensors = {
+			offset = {x = 0, y = 0, z = 2.5},  -- Front (bridge)
+			half_size = {x = 0.8, y = 0.5, z = 0.8},
+			max_health = 20,
+		},
+		life_support = {
+			offset = {x = 0, y = 0, z = 0},  -- Center core
+			half_size = {x = 0.8, y = 0.8, z = 0.8},
+			max_health = 50,
+		},
+	},
+	-- Grabon/Emularn enemy subsystems (scaled for larger size)
+	grabon = {
+		weapons = {
+			offset = {x = 0, y = 0, z = 0.5},
+			half_size = {x = 3, y = 1, z = 2},
+			max_health = 35,
+		},
+		engines = {
+			offset = {x = 0, y = 0, z = -3},
+			half_size = {x = 2, y = 1, z = 1.5},
+			max_health = 45,
+		},
+		shields = {
+			offset = {x = 0, y = 0.5, z = 1.5},
+			half_size = {x = 1.2, y = 0.6, z = 1.2},
+			max_health = 30,
+		},
+		sensors = {
+			offset = {x = 0, y = 0, z = 3},
+			half_size = {x = 1, y = 0.6, z = 1},
+			max_health = 25,
+		},
+		life_support = {
+			offset = {x = 0, y = 0, z = 0},
+			half_size = {x = 1, y = 1, z = 1},
+			max_health = 60,
+		},
+	},
+	-- Effects when subsystems are destroyed
+	damage_effects = {
+		life_support_drain = 2,  -- HP per second when life support is destroyed
+	},
+	-- UI display configuration
+	ui = {
+		target_x = 480 - 64 - 5 - 55,  -- Left of minimap
+		target_y = 10,
+		player_x = 165,                 -- Right of health bar (health bar is x=10, width=150)
+		player_y = 5,                   -- Near top, aligned with health bar area
+		display_size = 50,
+		repair_rate = 5,  -- Health points repaired per second (legacy, now uses repair_time)
+	},
+	-- Repair system configuration
+	repair = {
+		starting_kits = 10,      -- Number of repair kits ships start with
+		repair_time = 5.0,       -- Seconds to complete one repair
+		enemy_repair_delay = 3,  -- Seconds before enemy starts auto-queuing repairs
+	},
+}
+
 return Config
