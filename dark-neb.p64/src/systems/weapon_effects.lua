@@ -315,17 +315,19 @@ function WeaponEffects.spawn_explosion(pos, target, attacker_pos, target_heading
 			end
 		end
 
-		-- If no subsystem hit, apply hull damage
-		if not subsystem_result then
-			target.current_health = target.current_health - EXPLOSION_CONFIG.damage
-			if target.current_health < 0 then
-				target.current_health = 0
-			end
+		-- Always apply hull damage (in addition to any subsystem damage)
+		target.current_health = target.current_health - EXPLOSION_CONFIG.damage
+		if target.current_health < 0 then
+			target.current_health = 0
+		end
 
-			-- Log target health after damage
-			local target_name = target.id or "target"
-			local health_percent = (target.current_health / target.max_health) * 100
-			printh(target_name .. " took damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+		-- Log target health after damage
+		local target_name = target.id or "target"
+		local health_percent = (target.current_health / target.max_health) * 100
+		if subsystem_result then
+			printh(target_name .. " hull + subsystem damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+		else
+			printh(target_name .. " hull damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
 		end
 
 		-- Spawn smoke if target is below 30% health
@@ -371,15 +373,17 @@ function WeaponEffects.apply_weapon_damage(attacker_pos, target, damage)
 		end
 	end
 
-	-- If no subsystem was hit (or subsystems not set up), apply hull damage
-	if not subsystem_result then
-		target.current_health = target.current_health - damage
-		if target.current_health < 0 then
-			target.current_health = 0
-		end
+	-- Always apply hull damage (in addition to any subsystem damage)
+	target.current_health = target.current_health - damage
+	if target.current_health < 0 then
+		target.current_health = 0
+	end
 
-		local target_name = target.id or "target"
-		local health_percent = (target.current_health / target.max_health) * 100
+	local target_name = target.id or "target"
+	local health_percent = (target.current_health / target.max_health) * 100
+	if subsystem_result then
+		printh(target_name .. " hull + subsystem damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
+	else
 		printh(target_name .. " hull damage: " .. target.current_health .. "/" .. target.max_health .. " (" .. flr(health_percent) .. "%)")
 	end
 

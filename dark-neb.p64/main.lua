@@ -48,6 +48,12 @@ SceneRenderer = include("src/rendering/scene_renderer.lua")
 Minimap = include("src/minimap.lua")
 SubsystemUI = include("src/ui/subsystem_ui.lua")
 Menu = include("src/menu.lua")
+MenuMain = include("src/menu_main.lua")
+SaveData = include("src/save_data.lua")
+CampaignState = include("src/campaign/campaign_state.lua")
+SectorMap = include("src/campaign/sector_map.lua")
+CampaignUI = include("src/campaign/campaign_ui.lua")
+ShopUI = include("src/campaign/shop_ui.lua")
 Config = include("config.lua")
 
 -- ============================================
@@ -91,9 +97,16 @@ local current_health = Config.health.max_health
 local is_dead = false
 local destroyed_enemies = {}  -- Track which enemy ships have been destroyed (by ID)
 local death_time = 0
-local game_state = "menu"  -- "menu", "playing", "out_of_bounds", "game_over"
+local game_state = "main_menu"  -- "main_menu", "menu", "playing", "out_of_bounds", "game_over", "mission_success", "campaign_map", "campaign_shop", "campaign_victory", "campaign_death"
+local game_mode = nil  -- "tutorial", "campaign", "instant_action"
 local out_of_bounds_time = 0  -- Time spent out of bounds
 local is_out_of_bounds = false
+
+-- Campaign state
+local campaign_sector_map = nil  -- Current sector map
+local campaign_current_node = nil  -- Currently selected node
+local campaign_combat_credits = 0  -- Credits earned from last combat
+local campaign_pre_combat_health = 0  -- Health before combat (for damage tracking)
 
 -- Player health wrapper for smoke spawner registration
 -- This allows the smoke spawner to track player health dynamically
@@ -176,6 +189,11 @@ init_weapon_states()
 -- @return: true if weapon is fully charged and target is selected, false otherwise
 function is_weapon_ready(weapon_id, target)
 	local state = weapon_states[weapon_id]
+
+	-- Check if weapons subsystem is disabled
+	if player_health_obj.weapons_disabled then
+		return false  -- Weapons subsystem destroyed
+	end
 
 	if not target then
 		return false  -- No target selected
@@ -410,16 +428,24 @@ function _init()
 	WeaponEffects.setup(Config, SubsystemManager, AISystem, SubsystemUI)
 	Missions.init(Config)
 	Menu.init(Config)
+	MenuMain.init()
+	SaveData.init()
+	-- Load tutorial progress from save data
+	Menu.set_tutorial_progress(SaveData.get_tutorial_progress())
 	build_energy_hitboxes()
 
 	UIRenderer.init({panel = Panel, button = Button, minimap = Minimap, menu = Menu}, Config, {
 		on_restart = function()
-			game_state, is_dead, death_time, out_of_bounds_time, is_out_of_bounds = "menu", false, 0, 0, false
+			game_state, is_dead, death_time, out_of_bounds_time, is_out_of_bounds = "main_menu", false, 0, 0, false
+			game_mode = nil
 			Missions.init(Config)
+			MenuMain.init()
 			skip_next_menu_click = true
 		end,
 		on_menu = function()
-			game_state, out_of_bounds_time, is_out_of_bounds = "menu", 0, false
+			game_state, out_of_bounds_time, is_out_of_bounds = "main_menu", 0, false
+			game_mode = nil
+			MenuMain.init()
 		end
 	})
 
@@ -437,6 +463,115 @@ function _init()
 			table.insert(enemy_ships, create_enemy_from_config(sat_config, "satellite", model_satellite))
 		end
 	end
+end
+
+-- Start a campaign combat mission (1v1 duel)
+function start_campaign_combat()
+	game_state = "playing"
+	is_dead = false
+	death_time = 0
+	out_of_bounds_time = 0
+	is_out_of_bounds = false
+
+	-- Restore player ship state from campaign
+	CampaignState.restore_to_mission(player_health_obj, SubsystemManager)
+	current_health = player_health_obj.current_health
+
+	-- Reset player ship position
+	Config.ship.position = {x = 0, y = 0, z = 0}
+	Config.ship.heading = 0
+	MovementSystem.reset()
+
+	-- Set up mission 3 (duel) for campaign combat
+	Missions.init(Config)
+	for _ = 1, 2 do Missions.advance_mission() end  -- Go to mission 3
+
+	-- Set energy allocation for combat
+	Config.energy.systems.weapons.allocated = 4
+	Config.energy.systems.impulse.allocated = 2
+	Config.energy.systems.shields.allocated = 0
+	Config.energy.systems.sensors.allocated = 0
+	Config.energy.systems.tractor_beam.allocated = 0
+	energy_system.weapons = 4
+	energy_system.impulse = 2
+	energy_system.shields = 0
+	energy_system.sensors = 0
+	energy_system.tractor_beam = 0
+
+	reload_mission_satellites()
+
+	-- Play combat music
+	local mc = Config.music.missions_3_4
+	if mc then
+		fetch(mc.sfx_file):poke(mc.memory_address)
+		music(mc.pattern, nil, nil, mc.memory_address)
+		poke(0x5539, 0x20)
+	end
+
+	-- Register smoke spawners
+	WeaponEffects.register_smoke_spawner(player_health_obj, 0.5, function() return {x = 0, y = 0, z = 0} end)
+	for _, enemy in ipairs(enemy_ships) do
+		WeaponEffects.register_smoke_spawner(enemy, 0.5, function() return enemy.position end)
+	end
+
+	printh("Campaign: Started combat mission")
+end
+
+-- Check if sector is complete and advance or show completion
+function check_sector_complete()
+	if SectorMap.is_sector_complete(campaign_sector_map) then
+		-- Advance to next sector
+		CampaignState.advance_sector()
+		local sector = CampaignState.get_current_sector()
+
+		-- Check if campaign is won
+		local is_over, reason = CampaignState.is_run_over()
+		if is_over and reason == "victory" then
+			game_state = "campaign_victory"
+		else
+			-- Generate new sector map
+			campaign_sector_map = SectorMap.generate(Config, sector)
+			CampaignState.set_sector_map(campaign_sector_map)
+			game_state = "campaign_map"
+		end
+	else
+		game_state = "campaign_map"
+	end
+end
+
+-- Handle campaign combat victory
+function on_campaign_combat_victory()
+	-- Calculate damage taken
+	local state = CampaignState.get_state()
+	local damage_taken = campaign_pre_combat_health - player_health_obj.current_health
+
+	-- Save ship state
+	local subsystem_states = SubsystemManager.get_all_states("player_ship")
+	CampaignState.save_post_combat(player_health_obj, subsystem_states, damage_taken)
+
+	-- Count damaged subsystems for bonus calculation
+	local subsystems_damaged = 0
+	if subsystem_states then
+		for _, sub in pairs(subsystem_states) do
+			if sub.health < sub.max_health then
+				subsystems_damaged = subsystems_damaged + 1
+			end
+		end
+	end
+
+	-- Award credits
+	campaign_combat_credits = CampaignState.award_combat_credits(Config, subsystems_damaged)
+
+	music(-1)
+	game_state = "campaign_victory"
+	printh("Campaign: Combat victory, awarded " .. campaign_combat_credits .. " credits")
+end
+
+-- Handle campaign player death
+function on_campaign_death()
+	music(-1)
+	game_state = "campaign_death"
+	printh("Campaign: Player died")
 end
 
 -- Load satellites for current mission
@@ -518,11 +653,18 @@ local function handle_player_death()
 	player_health_obj.current_health = 0
 	is_dead = true
 	death_time = 0
-	game_state = "game_over"
-	music(-1)
+
 	if Config.explosion.enabled then
 		table.insert(active_explosions, Explosion.new(Config.ship.position.x, Config.ship.position.y, Config.ship.position.z, Config.explosion))
 		sfx(3)
+	end
+
+	-- Route to appropriate death handler
+	if game_mode == "campaign" then
+		on_campaign_death()
+	else
+		game_state = "game_over"
+		music(-1)
 	end
 end
 
@@ -580,8 +722,14 @@ local function update_mission_objectives()
 
 	if Missions.check_mission_complete() and not Missions.is_mission_complete() then
 		Missions.set_mission_complete()
-		mission_success_time = m.id == 2 and -5.0 or (m.id >= 3 and -3.0 or 0)
-		game_state = "mission_success"
+
+		-- Route to appropriate success handler
+		if game_mode == "campaign" then
+			on_campaign_combat_victory()
+		else
+			mission_success_time = m.id == 2 and -5.0 or (m.id >= 3 and -3.0 or 0)
+			game_state = "mission_success"
+		end
 	end
 end
 
@@ -601,7 +749,81 @@ function _update()
 
 
 
-	-- Handle menu input
+	-- Handle main menu (mode selection)
+	if game_state == "main_menu" then
+		local mouse_click = (mb & 1) == 1
+		local selected_mode = MenuMain.update(mx, my, mouse_click)
+		if selected_mode then
+			game_mode = selected_mode
+			if selected_mode == "campaign" then
+				-- Start new campaign run
+				CampaignState.new_run(Config)
+				campaign_sector_map = SectorMap.generate(Config, 1)
+				CampaignState.set_sector_map(campaign_sector_map)
+				game_state = "campaign_map"
+			else
+				-- Tutorial or Instant Action - go to mission submenu
+				game_state = "menu"
+				Menu.init(Config, game_mode)  -- Pass mode to menu
+			end
+		end
+		return  -- Skip all other updates while in main menu
+	end
+
+	-- Handle campaign sector map
+	if game_state == "campaign_map" then
+		local mouse_click = (mb & 1) == 1
+		local result = CampaignUI.update(campaign_sector_map, Config, mx, my, mouse_click)
+
+		if result == "back" then
+			CampaignState.end_run()
+			game_state = "main_menu"
+			game_mode = nil
+			MenuMain.init()
+		elseif result and type(result) == "table" then
+			-- Node selected
+			campaign_current_node = result
+			SectorMap.visit_node(campaign_sector_map, result.id)
+			CampaignState.visit_node(result.id)
+
+			if result.type == "combat" then
+				-- Start combat mission
+				campaign_pre_combat_health = CampaignState.get_state().ship.current_health
+				start_campaign_combat()
+			elseif result.type == "shop" or result.type == "planet" then
+				game_state = "campaign_shop"
+			elseif result.type == "empty" then
+				-- Rest stop - just continue
+				check_sector_complete()
+			end
+		end
+		return
+	end
+
+	-- Handle campaign shop
+	if game_state == "campaign_shop" then
+		local mouse_click = (mb & 1) == 1
+		local result = ShopUI.update(CampaignState, Config, mx, my, mouse_click)
+
+		if result == "continue" then
+			check_sector_complete()
+		end
+		return
+	end
+
+	-- Handle campaign victory screen (after combat)
+	if game_state == "campaign_victory" then
+		-- Handled in _draw()
+		return
+	end
+
+	-- Handle campaign death screen
+	if game_state == "campaign_death" then
+		-- Handled in _draw()
+		return
+	end
+
+	-- Handle mission submenu input (tutorial/instant action)
 	if game_state == "menu" then
 		local menu_input = {
 			select = keyp("return") or keyp("z"),
@@ -615,7 +837,17 @@ function _update()
 		end
 		local mouse_click = ((mb & 1) == 1) and not skip_next_menu_click
 
-		if Menu.update(menu_input, mx, my, mouse_click) then
+		local menu_result = Menu.update(menu_input, mx, my, mouse_click)
+
+		-- Handle back button
+		if menu_result == "back" then
+			game_state = "main_menu"
+			game_mode = nil
+			MenuMain.init()
+			return
+		end
+
+		if menu_result == true then
 			-- Campaign selected, start game
 			game_state = "playing"
 			is_dead = false
@@ -723,7 +955,8 @@ function _update()
 				local weapon_id = WeaponsUI.get_weapon_at_point(mx, my, Config)
 				if weapon_id then
 					local w, s = Config.weapons[weapon_id], weapon_states[weapon_id]
-					if energy_system.weapons >= w.energy_cost and s.charge >= 1.0 and current_selected_target then
+					local weapons_disabled = player_health_obj.weapons_disabled or false
+					if not weapons_disabled and energy_system.weapons >= w.energy_cost and s.charge >= 1.0 and current_selected_target then
 						local tp, tr = get_target_pos_ref(current_selected_target)
 						if tp and tr and ShipSystems.is_in_range(ship_pos, tp, w.range) and
 						   ShipSystems.is_in_firing_arc(ship_pos, ship_heading_dir, tp, w.arc_start, w.arc_end) then
@@ -963,6 +1196,12 @@ end
 function _draw()
 	cls(0)  -- Clear to dark blue
 
+	-- Draw main menu (mode selection) - draw and return early
+	if game_state == "main_menu" then
+		MenuMain.draw(StarField, camera)
+		return
+	end
+
 	-- Get mouse position once for use throughout draw function
 	local mx, my, mb = mouse()
 
@@ -1159,7 +1398,9 @@ function _draw()
 		-- Draw player subsystem display
 		local player_heading = atan2(ship_heading_dir.x, ship_heading_dir.z)
 		local input_state = InputSystem.get_input()
-		SubsystemUI.draw_player("player_ship", nearest_enemy_pos, player_pos, player_heading, sub_ui.player_x, sub_ui.player_y, mx, my, input_state.button_pressed)
+		local has_selected_target = current_selected_target and not current_selected_target.is_destroyed
+		local life_support_countdown = player_health_obj.life_support_time_remaining
+		SubsystemUI.draw_player("player_ship", nearest_enemy_pos, player_pos, player_heading, sub_ui.player_x, sub_ui.player_y, mx, my, input_state.button_pressed, has_selected_target, life_support_countdown)
 
 		-- Draw hover tooltip (after both displays)
 		SubsystemUI.draw_hover_tooltip()
@@ -1181,18 +1422,74 @@ function _draw()
 		UIRenderer.get_buttons().back_to_menu_button:update(mx, my, (mb & 1) == 1)
 		UIRenderer.draw_out_of_bounds(remaining)
 		if out_of_bounds_time >= Config.battlefield.out_of_bounds_warning_time then
-			game_state, out_of_bounds_time, is_out_of_bounds = "menu", 0, false
+			game_state, out_of_bounds_time, is_out_of_bounds = "main_menu", 0, false
+			game_mode = nil
+			MenuMain.init()
 		end
 	end
 
 	if game_state == "menu" then UIRenderer.draw_menu() end
 
+	-- Campaign sector map
+	if game_state == "campaign_map" then
+		cls(0)
+		CampaignUI.draw_sector_map(campaign_sector_map, Config, mx, my)
+		CampaignUI.draw_status_bar(CampaignState, Config)
+		CampaignUI.draw_ship_status(CampaignState)
+		CampaignUI.draw_node_tooltip(Config, mx, my)
+		CampaignUI.draw_back_button()
+		return
+	end
+
+	-- Campaign shop
+	if game_state == "campaign_shop" then
+		ShopUI.draw(CampaignState, Config, mx, my)
+		return
+	end
+
+	-- Campaign victory (after combat)
+	if game_state == "campaign_victory" then
+		if CampaignUI.draw_combat_victory(campaign_combat_credits, mx, my, mb) then
+			check_sector_complete()
+		end
+		return
+	end
+
+	-- Campaign death
+	if game_state == "campaign_death" then
+		local stats = CampaignState.get_state() and CampaignState.get_state().stats or nil
+		local result = CampaignUI.draw_death_screen(stats, mx, my, mb)
+		if result == "retry" then
+			-- Start new run
+			CampaignState.new_run(Config)
+			campaign_sector_map = SectorMap.generate(Config, 1)
+			CampaignState.set_sector_map(campaign_sector_map)
+			game_state = "campaign_map"
+		elseif result == "menu" then
+			CampaignState.end_run()
+			game_state = "main_menu"
+			game_mode = nil
+			MenuMain.init()
+		end
+		return
+	end
+
 	-- Mission success screen
 	if game_state == "mission_success" then
 		mission_success_time = mission_success_time + 1/60
 		if mission_success_time >= 0 and UIRenderer.draw_mission_success(Missions.get_current_mission().id, mx, my, mb) then
+			-- Track tutorial progress
+			if game_mode == "tutorial" then
+				local completed_mission = Menu.get_selected_mission()
+				if completed_mission then
+					Menu.complete_tutorial_mission(completed_mission.id)
+					SaveData.set_tutorial_mission_complete(completed_mission.id)
+				end
+			end
+
 			game_state, mission_success_time, skip_next_menu_click = "menu", 0, true
 			Missions.init(Config)
+			Menu.init(Config, game_mode)  -- Reinit menu with updated progress
 		end
 	end
 

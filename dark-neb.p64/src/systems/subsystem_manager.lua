@@ -334,15 +334,36 @@ function SubsystemManager.apply_effects(entity, energy_system, targeting_system,
 		entity.sensors_disabled = false
 	end
 
-	-- Life support destroyed: continuous health drain
+	-- Life support destroyed: 2 minute countdown until ship explodes
 	if subs.life_support and subs.life_support.destroyed then
 		entity.life_support_disabled = true
-		local drain_rate = Config.subsystems.damage_effects.life_support_drain or 2
-		if entity.current_health then
-			entity.current_health = entity.current_health - (drain_rate * dt)
+
+		-- Start countdown timer when life support is first destroyed
+		if not entity.life_support_destroyed_time then
+			entity.life_support_destroyed_time = t()
+			printh("SubsystemManager: " .. entity.id .. " life support destroyed - 2 minute countdown started")
+		end
+
+		-- Check if countdown has expired (2 minutes = 120 seconds)
+		local failure_time = Config.subsystems.damage_effects.life_support_failure_time or 120
+		local elapsed = t() - entity.life_support_destroyed_time
+		entity.life_support_time_remaining = failure_time - elapsed
+
+		if elapsed >= failure_time then
+			-- Time's up - ship explodes
+			if entity.current_health and entity.current_health > 0 then
+				entity.current_health = 0
+				printh("SubsystemManager: " .. entity.id .. " life support failure - ship destroyed!")
+			end
 		end
 	else
 		entity.life_support_disabled = false
+		-- Clear the timer if life support is repaired
+		if entity.life_support_destroyed_time then
+			entity.life_support_destroyed_time = nil
+			entity.life_support_time_remaining = nil
+			printh("SubsystemManager: " .. entity.id .. " life support restored - countdown cancelled")
+		end
 	end
 end
 

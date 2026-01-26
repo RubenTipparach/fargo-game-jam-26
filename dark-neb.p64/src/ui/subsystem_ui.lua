@@ -170,7 +170,7 @@ function SubsystemUI.update(dt)
 	end
 end
 
--- Auto-queue repairs for damaged subsystems (for AI enemies)
+-- Auto-queue repairs for destroyed (offline) subsystems (for AI enemies)
 function SubsystemUI.auto_queue_repairs(entity_id)
 	if not SubsystemManager then return end
 
@@ -185,7 +185,8 @@ function SubsystemUI.auto_queue_repairs(entity_id)
 
 	for _, name in ipairs(priority) do
 		local sub = states[name]
-		if sub and sub.health < sub.max_health then
+		-- Only queue repairs for DESTROYED (offline) subsystems, not just damaged ones
+		if sub and sub.destroyed then
 			-- Check if already in queue
 			local in_queue = false
 			for _, queued in ipairs(repair_state.queue) do
@@ -231,8 +232,10 @@ end
 local function get_subsystem_box_pos(cx, cy, radius, subsystem_name)
 	local layout = SUBSYSTEM_LAYOUT[subsystem_name]
 	if not layout then return cx, cy end
-	local box_x = cx + cos(layout.angle) * radius * layout.radius
-	local box_y = cy - sin(layout.angle) * radius * layout.radius
+	-- Add 0.5 to rotate display 180 degrees (so front/sensors at top)
+	local draw_angle = (layout.angle + 0.5) % 1
+	local box_x = cx + cos(draw_angle) * radius * layout.radius
+	local box_y = cy - sin(draw_angle) * radius * layout.radius
 	return box_x, box_y
 end
 
@@ -323,6 +326,28 @@ local function draw_subsystem_box(cx, cy, radius, subsystem_name, health, max_he
 	return box_x, box_y, half
 end
 
+-- Draw bow (front) indicator - blue arrow from center pointing up
+-- @param cx, cy: Center of the circular display
+-- @param radius: Radius to extend arrow to
+local function draw_bow_indicator(cx, cy, radius)
+	-- 0.75 points up on screen after 180 degree rotation (0.25 + 0.5)
+	local bow_angle = 0.75
+	local arrow_len = radius * 0.5
+
+	-- Arrow from center outward toward bow (up)
+	local arrow_end_x = cx + cos(bow_angle) * arrow_len
+	local arrow_end_y = cy - sin(bow_angle) * arrow_len
+
+	line(cx, cy, arrow_end_x, arrow_end_y, 12)  -- Blue arrow
+
+	-- Arrow head at outer end pointing outward
+	local head_angle1 = bow_angle + 0.5 + 0.1  -- Point back toward center
+	local head_angle2 = bow_angle + 0.5 - 0.1
+	local head_len = 3
+	line(arrow_end_x, arrow_end_y, arrow_end_x + cos(head_angle1) * head_len, arrow_end_y - sin(head_angle1) * head_len, 12)
+	line(arrow_end_x, arrow_end_y, arrow_end_x + cos(head_angle2) * head_len, arrow_end_y - sin(head_angle2) * head_len, 12)
+end
+
 -- Draw attack angle indicator
 -- @param cx, cy: Center of the circular display
 -- @param radius: Radius of the display circle
@@ -330,17 +355,20 @@ end
 local function draw_attack_angle(cx, cy, radius, attack_angle)
 	if not attack_angle then return end
 
-	-- Draw arrow pointing inward from attack direction
-	local arrow_start_x = cx + cos(attack_angle) * (radius + 5)  -- Outer end
-	local arrow_start_y = cy - sin(attack_angle) * (radius + 5)
-	local arrow_end_x = cx + cos(attack_angle) * (radius - 2)    -- Inner end (tip)
-	local arrow_end_y = cy - sin(attack_angle) * (radius - 2)
+	-- Add 0.5 for 180 degree rotation to match subsystem positions
+	local draw_angle = (attack_angle + 0.5) % 1
+
+	-- Draw arrow from outside pointing INWARD toward center (showing attack direction)
+	local arrow_start_x = cx + cos(draw_angle) * (radius + 5)  -- Outer end (start)
+	local arrow_start_y = cy - sin(draw_angle) * (radius + 5)
+	local arrow_end_x = cx + cos(draw_angle) * (radius * 0.3)  -- Inner end (tip near center)
+	local arrow_end_y = cy - sin(draw_angle) * (radius * 0.3)
 
 	line(arrow_start_x, arrow_start_y, arrow_end_x, arrow_end_y, 8)  -- Red arrow
 
-	-- Arrow head at inner end (tip), lines go toward center to form "V" pointing inward
-	local head_angle1 = attack_angle + 0.1  -- Same direction + spread
-	local head_angle2 = attack_angle - 0.1  -- Same direction - spread
+	-- Arrow head at inner end (tip), pointing toward center
+	local head_angle1 = draw_angle + 0.1  -- Same direction + spread
+	local head_angle2 = draw_angle - 0.1  -- Same direction - spread
 	local head_len = 4
 	line(arrow_end_x, arrow_end_y, arrow_end_x + cos(head_angle1) * head_len, arrow_end_y - sin(head_angle1) * head_len, 8)
 	line(arrow_end_x, arrow_end_y, arrow_end_x + cos(head_angle2) * head_len, arrow_end_y - sin(head_angle2) * head_len, 8)
@@ -367,24 +395,26 @@ function SubsystemUI.draw_target(target, player_pos, ui_x, ui_y, mx, my)
 	circ(cx, cy, radius + 3, 6)
 
 	-- Calculate attack angle (player to target direction, relative to target heading)
-	-- Only show if we have a selected target with valid position
 	local attack_angle = nil
 	local likely_hit = nil
 	if player_pos and target.position then
-		-- Negate dx to fix left/right mirroring (screen X is opposite of world X for atan2)
-		local dx = target.position.x - player_pos.x
+		local dx = player_pos.x - target.position.x
 		local dz = player_pos.z - target.position.z
-		local world_angle = atan2(dx, dz)  -- Angle from target to player (corrected)
+		local world_angle = atan2(dx, dz)  -- Angle from target to player in world space
 		local target_heading = target.heading or 0
-		attack_angle = (world_angle - target_heading + 0.25) % 1  -- Relative to target's front
+		-- Convert to screen angle: negate world_angle and add offset for screen coordinates
+		attack_angle = (target_heading - world_angle + 0.25 + 1) % 1  -- Relative to target's front
 		likely_hit = get_likely_hit_subsystem(attack_angle)
 	end
 
-	-- Draw each subsystem FIRST (so arrow draws on top)
+	-- Draw each subsystem FIRST (so arrows draw on top)
 	for name, state in pairs(states) do
 		local highlighted = (name == likely_hit)
 		draw_subsystem_box(cx, cy, radius, name, state.health, state.max_health, state.destroyed, highlighted, false, 0, mx, my)
 	end
+
+	-- Draw blue bow indicator (centered)
+	draw_bow_indicator(cx, cy, radius)
 
 	-- Draw attack angle indicator ON TOP of subsystems
 	if attack_angle then
@@ -403,7 +433,9 @@ end
 -- @param ui_x, ui_y: Top-left corner of the display
 -- @param mx, my: Mouse position for repair queue interaction
 -- @param clicked: Whether mouse was clicked this frame
-function SubsystemUI.draw_player(player_id, enemy_pos, player_pos, player_heading, ui_x, ui_y, mx, my, clicked)
+-- @param has_selected_target: Whether player has a target selected (only show arrow if true)
+-- @param life_support_countdown: Seconds remaining until life support failure (nil if life support OK)
+function SubsystemUI.draw_player(player_id, enemy_pos, player_pos, player_heading, ui_x, ui_y, mx, my, clicked, has_selected_target, life_support_countdown)
 	if not player_id or not SubsystemManager then
 		-- Debug: draw placeholder if no manager
 		rectfill(ui_x, ui_y, ui_x + 50, ui_y + 50, 2)
@@ -429,15 +461,15 @@ function SubsystemUI.draw_player(player_id, enemy_pos, player_pos, player_headin
 	circ(cx, cy, radius + 3, 6)
 
 	-- Calculate incoming attack angle (enemy to player, relative to player heading)
-	-- Only show arrow if enemy_pos is provided (indicates active threat)
+	-- Only show arrow if has_selected_target is true AND enemy_pos is provided
 	local attack_angle = nil
 	local likely_hit = nil
-	if enemy_pos and player_pos then
-		-- Negate dx to fix left/right mirroring (screen X is opposite of world X for atan2)
-		local dx = player_pos.x - enemy_pos.x
+	if has_selected_target and enemy_pos and player_pos then
+		local dx = enemy_pos.x - player_pos.x
 		local dz = enemy_pos.z - player_pos.z
-		local world_angle = atan2(dx, dz)  -- Angle from enemy to player (corrected)
-		attack_angle = (world_angle - player_heading + 0.25) % 1  -- Relative to player's front
+		local world_angle = atan2(dx, dz)  -- Angle from player to enemy in world space
+		-- Convert to screen angle: negate world_angle and add offset for screen coordinates
+		attack_angle = (player_heading - world_angle + 0.25 + 1) % 1  -- Relative to player's front
 		likely_hit = get_likely_hit_subsystem(attack_angle)
 	end
 
@@ -487,7 +519,10 @@ function SubsystemUI.draw_player(player_id, enemy_pos, player_pos, player_headin
 		end
 	end
 
-	-- Draw attack angle indicator ON TOP of subsystems (if enemy nearby)
+	-- Draw blue bow indicator (centered)
+	draw_bow_indicator(cx, cy, radius)
+
+	-- Draw attack angle indicator ON TOP of subsystems (only if target selected)
 	if attack_angle then
 		draw_attack_angle(cx, cy, radius, attack_angle)
 	end
@@ -535,6 +570,24 @@ function SubsystemUI.draw_player(player_id, enemy_pos, player_pos, player_headin
 				break
 			end
 		end
+	end
+
+	-- Life support failure countdown warning
+	if life_support_countdown and life_support_countdown > 0 then
+		local minutes = flr(life_support_countdown / 60)
+		local seconds = flr(life_support_countdown % 60)
+		local countdown_text = string.format("%d:%02d", minutes, seconds)
+
+		-- Blinking red warning (faster blink as time runs out)
+		local blink_rate = life_support_countdown < 30 and 4 or 2  -- Faster blink under 30 seconds
+		local show_warning = (t() * blink_rate) % 1 < 0.5
+
+		if show_warning then
+			print("LIFE SUPPORT FAILING!", ui_x - 15, queue_y, 8)
+			queue_y = queue_y + 8
+		end
+		print(countdown_text, ui_x + 10, queue_y, 8)
+		queue_y = queue_y + 10
 	end
 
 	-- Label in green (player/friendly color)

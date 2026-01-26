@@ -747,7 +747,8 @@ Config.subsystems = {
 	},
 	-- Effects when subsystems are destroyed
 	damage_effects = {
-		life_support_drain = 2,  -- HP per second when life support is destroyed
+		life_support_drain = 2,  -- HP per second when life support is destroyed (legacy, not used)
+		life_support_failure_time = 120,  -- Seconds until ship explodes when life support destroyed (2 minutes)
 	},
 	-- UI display configuration
 	ui = {
@@ -764,6 +765,59 @@ Config.subsystems = {
 		repair_time = 5.0,       -- Seconds to complete one repair
 		enemy_repair_delay = 3,  -- Seconds before enemy starts auto-queuing repairs
 	},
+}
+
+-- Campaign (roguelite) configuration
+Config.campaign = {
+	-- Starting resources
+	starting_credits = 100,
+	starting_repair_kits = 3,
+
+	-- Credit rewards
+	combat_victory_base = 30,
+	combat_victory_max = 50,
+	no_subsystem_damage_bonus = 20,
+
+	-- Shop items
+	shop_items = {
+		{id = "repair_kit", name = "Repair Kit", cost = 25, description = "Repair one subsystem"},
+		{id = "hull_repair", name = "Hull Repair", cost = 50, heal_amount = 50, description = "Restore 50 hull HP"},
+		{id = "full_repair", name = "Full Repair", cost = 100, description = "Full hull and subsystem repair"},
+	},
+
+	-- Sector map generation
+	sectors_per_run = 8,
+	nodes_per_column = {1, 3, 3, 2},  -- Fan out then converge
+	node_type_weights = {
+		combat = 0.5,   -- 50% combat nodes
+		shop = 0.2,     -- 20% shop nodes
+		empty = 0.2,    -- 20% rest stops
+		planet = 0.1,   -- 10% planet encounters
+	},
+
+	-- Map display
+	map_width = 400,
+	map_height = 220,
+	map_x = 40,
+	map_y = 25,
+	node_radius = 8,
+
+	-- Node colors
+	colors = {
+		combat = 8,    -- Red
+		shop = 11,     -- Green
+		empty = 6,     -- Gray
+		planet = 12,   -- Blue
+		visited = 5,   -- Dark gray
+		current = 10,  -- Yellow
+		available = 7, -- White
+		connection = 1, -- Dark
+	},
+}
+
+-- Tutorial configuration
+Config.tutorial = {
+	save_progress = true,  -- Persist tutorial completion between sessions
 }
 
 return Config

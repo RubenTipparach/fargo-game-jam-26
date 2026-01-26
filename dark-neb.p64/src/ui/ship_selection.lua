@@ -92,16 +92,45 @@ function ShipSelection.draw_target_health(current_selected_target, camera, proje
 	-- Draw target health bar and indicator if satellite/Grabon is targeted (hovering above target in screen space)
 	-- Hide health bar if satellite/Grabon is destroyed
 	if current_selected_target and (current_selected_target.type == "satellite" or current_selected_target.type == "grabon") and current_selected_target.position and not current_selected_target.is_destroyed then
-		-- Project satellite position to screen to draw health bar above it
 		local sat_pos = current_selected_target.position
-		local screen_x, screen_y = project_point(sat_pos.x, sat_pos.y + 4, sat_pos.z, camera)
+		local sat_collider = current_selected_target.config.collider
 
-		if screen_x and screen_y then
-			-- Draw health bar above the target
+		-- Project all 8 corners of the collider to screen space (same as selection box)
+		local corners = {
+			{sat_pos.x - sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+			{sat_pos.x + sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+			{sat_pos.x - sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+			{sat_pos.x + sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z - sat_collider.half_size.z},
+			{sat_pos.x - sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+			{sat_pos.x + sat_collider.half_size.x, sat_pos.y - sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+			{sat_pos.x - sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+			{sat_pos.x + sat_collider.half_size.x, sat_pos.y + sat_collider.half_size.y, sat_pos.z + sat_collider.half_size.z},
+		}
+
+		-- Find min/max screen coordinates
+		local min_screen_x = 999
+		local max_screen_x = 0
+		local min_screen_y = 999
+		local max_screen_y = 0
+
+		for _, corner in ipairs(corners) do
+			local sx, sy = project_point(corner[1], corner[2], corner[3], camera)
+			if sx and sy then
+				min_screen_x = min(min_screen_x, sx)
+				max_screen_x = max(max_screen_x, sx)
+				min_screen_y = min(min_screen_y, sy)
+				max_screen_y = max(max_screen_y, sy)
+			end
+		end
+
+		-- Draw health bar if we have valid screen coordinates
+		if max_screen_x > 0 and min_screen_x < 480 and max_screen_y > 0 and min_screen_y < 270 then
+			-- Draw health bar above the selection box
 			local bar_width = 60
 			local bar_height = 8
-			local bar_x = screen_x - (bar_width / 2)  -- Center bar on target
-			local bar_y = screen_y - 15  -- Offset above target
+			local box_center_x = (min_screen_x + max_screen_x) / 2
+			local bar_x = box_center_x - (bar_width / 2)  -- Center bar on selection box
+			local bar_y = min_screen_y - bar_height - 12  -- Above the selection box
 
 			-- Target health bar background (black with border)
 			rectfill(bar_x - 1, bar_y - 1, bar_x + bar_width + 1, bar_y + bar_height + 1, 0)  -- Dark border
@@ -117,10 +146,10 @@ function ShipSelection.draw_target_health(current_selected_target, camera, proje
 			-- Target health bar border (bright)
 			rect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, 11)
 
-			-- Target name below health bar
+			-- Target name above health bar
 			local target_name = current_selected_target.id
-			local name_x = bar_x + (bar_width / 2) - (#target_name * 2)
-			local name_y = bar_y + bar_height + 2
+			local name_x = box_center_x - (#target_name * 2)
+			local name_y = bar_y - 8  -- Above the health bar
 			print(target_name, name_x, name_y, 11)  -- Bright color for name
 		end
 	end
