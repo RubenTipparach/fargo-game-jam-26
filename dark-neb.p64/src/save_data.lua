@@ -12,6 +12,7 @@ local default_data = {
 	tutorial = {
 		mission_1_complete = false,
 	},
+	campaign = nil,  -- Campaign run state (nil = no active run)
 }
 
 -- Current save data (loaded on init)
@@ -94,6 +95,42 @@ function SaveData.reset()
 	end
 	SaveData.save()
 	printh("SaveData: Reset to defaults")
+end
+
+-- Check if there's a saved campaign run
+function SaveData.has_campaign_save()
+	if not current_data then
+		SaveData.load()
+	end
+	return current_data.campaign ~= nil
+end
+
+-- Save campaign state
+function SaveData.save_campaign(run_state)
+	if not current_data then
+		SaveData.load()
+	end
+	current_data.campaign = run_state
+	SaveData.save()
+	printh("SaveData: Saved campaign state")
+end
+
+-- Load campaign state
+function SaveData.load_campaign()
+	if not current_data then
+		SaveData.load()
+	end
+	return current_data.campaign
+end
+
+-- Clear campaign save (on death or completion)
+function SaveData.clear_campaign()
+	if not current_data then
+		SaveData.load()
+	end
+	current_data.campaign = nil
+	SaveData.save()
+	printh("SaveData: Cleared campaign save")
 end
 
 return SaveData

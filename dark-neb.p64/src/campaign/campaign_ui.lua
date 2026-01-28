@@ -7,6 +7,38 @@ local CampaignUI = {}
 -- Track last click state for button detection
 local last_click_state = false
 local hovered_node = nil
+local repair_button_bounds = nil
+local repair_hover = false
+
+-- Campaign select screen state
+local select_hovered = nil  -- "continue", "new", "back"
+local select_continue_bounds = nil
+local select_new_bounds = nil
+local select_back_bounds = nil
+
+-- Ship movement animation state
+local ship_anim = {
+	active = false,
+	from_x = 0,
+	from_y = 0,
+	to_x = 0,
+	to_y = 0,
+	progress = 0,
+	duration = 0.5,  -- seconds
+	target_node = nil,
+}
+
+-- Combat encounter prompt state
+local encounter_prompt = {
+	active = false,
+	node = nil,
+}
+
+-- Current location info (for shop button)
+local current_location = {
+	node = nil,
+	shop_button_hover = false,
+}
 
 -- Draw the sector map
 -- @param map: Sector map from SectorMap.generate()
@@ -80,10 +112,48 @@ function CampaignUI.draw_sector_map(map, config, mx, my)
 			icon = "-"
 		elseif node.type == "planet" then
 			icon = "P"
+		elseif node.type == "exit" then
+			icon = ">"
 		end
 
 		local text_color = node.visited and 1 or 7
 		print(icon, nx - 2, ny - 3, text_color)
+	end
+
+	-- Draw ship marker - either animating or at current position
+	local ship_x, ship_y
+	local ship_color = colors.ship or 10
+
+	if ship_anim.active then
+		-- Interpolate position during animation
+		local t = ship_anim.progress
+		-- Ease out cubic for smooth deceleration
+		t = 1 - (1 - t) * (1 - t) * (1 - t)
+		ship_x = ship_anim.from_x + (ship_anim.to_x - ship_anim.from_x) * t
+		ship_y = ship_anim.from_y + (ship_anim.to_y - ship_anim.from_y) * t
+	else
+		-- Find current node (most recently visited with highest column)
+		local current_node = nil
+		for i = #map.nodes, 1, -1 do
+			if map.nodes[i].visited then
+				if not current_node or map.nodes[i].column > current_node.column then
+					current_node = map.nodes[i]
+				end
+			end
+		end
+
+		if current_node then
+			ship_x = map_x + current_node.x * map_width
+			ship_y = map_y + current_node.y * map_height
+		end
+	end
+
+	if ship_x and ship_y then
+		-- Draw ship marker (small circle with direction indicator)
+		circfill(ship_x, ship_y, 5, ship_color)
+		circ(ship_x, ship_y, 5, 7)
+		-- Draw direction indicator (pointing right)
+		line(ship_x + 3, ship_y, ship_x + 7, ship_y, 7)
 	end
 
 	-- Draw sector title
@@ -114,9 +184,10 @@ function CampaignUI.draw_status_bar(campaign_state, config)
 	print(progress_text, 480 - #progress_text * 4 - 10, y, 7)
 end
 
--- Draw ship status panel (health, subsystems)
+-- Draw ship status panel (health, subsystems) with repair button
 -- @param campaign_state: CampaignState module
-function CampaignUI.draw_ship_status(campaign_state)
+-- @param mx, my: Mouse position for hover detection
+function CampaignUI.draw_ship_status(campaign_state, mx, my)
 	local state = campaign_state.get_state()
 	if not state then return end
 
@@ -139,8 +210,35 @@ function CampaignUI.draw_ship_status(campaign_state)
 	rect(x, y, x + bar_width, y + bar_height, 7)
 	print(ship.current_health .. "/" .. ship.max_health, x + bar_width + 5, y, 7)
 
+	-- Repair button (uses repair kit to heal hull)
+	local can_repair = state.repair_kits > 0 and ship.current_health < ship.max_health
+	local btn_x = x + 150
+	local btn_y = y - 2
+	local btn_w = 60
+	local btn_h = 12
+
+	repair_button_bounds = {x1 = btn_x, y1 = btn_y, x2 = btn_x + btn_w, y2 = btn_y + btn_h}
+	repair_hover = mx and my and mx >= btn_x and mx <= btn_x + btn_w and my >= btn_y and my <= btn_y + btn_h
+
+	local btn_color = 1  -- Dark default
+	local txt_color = 5  -- Gray when disabled
+	if can_repair then
+		txt_color = 7
+		if repair_hover then
+			btn_color = 5
+			txt_color = 11
+		end
+	end
+
+	rectfill(btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, btn_color)
+	rect(btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, can_repair and (repair_hover and 11 or 6) or 5)
+	print("Repair", btn_x + 12, btn_y + 2, txt_color)
+
+	-- Repair kits count
+	print("Kits: " .. state.repair_kits, btn_x + btn_w + 8, btn_y + 2, 12)
+
 	-- Subsystem status icons
-	local sub_x = x + 180
+	local sub_x = x + 280
 	local sub_y = y - 5
 	local sub_spacing = 25
 
@@ -175,6 +273,22 @@ function CampaignUI.draw_ship_status(campaign_state)
 	end
 end
 
+-- Handle repair button click
+-- @param campaign_state: CampaignState module
+-- @param mouse_click: Whether mouse is clicked
+-- @return: true if repair was used
+function CampaignUI.handle_repair_click(campaign_state, mouse_click)
+	if repair_hover and mouse_click and not last_click_state then
+		local state = campaign_state.get_state()
+		if state and state.repair_kits > 0 and state.ship.current_health < state.ship.max_health then
+			if campaign_state.use_repair_kit_for_hull(25) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 -- Draw tooltip for hovered node
 function CampaignUI.draw_node_tooltip(config, mx, my)
 	if not hovered_node then return end
@@ -184,6 +298,7 @@ function CampaignUI.draw_node_tooltip(config, mx, my)
 		shop = "Shop: Buy repairs and supplies",
 		empty = "Rest Stop: Safe passage",
 		planet = "Planet: Special encounter",
+		exit = "Warp Gate: Jump to next sector",
 	}
 
 	local text = descriptions[hovered_node.type] or "Unknown"
@@ -218,8 +333,9 @@ end
 -- @param config: Game config
 -- @param mx, my: Mouse position
 -- @param mouse_click: Whether mouse is clicked
--- @return: Selected node if clicked, "back" if back button clicked, nil otherwise
-function CampaignUI.update(map, config, mx, my, mouse_click)
+-- @param campaign_state: Optional CampaignState for repair handling
+-- @return: Selected node if clicked, "back" if back button clicked, "repair" if repair used, nil otherwise
+function CampaignUI.update(map, config, mx, my, mouse_click, campaign_state)
 	-- Check back button
 	local back_bounds = CampaignUI.draw_back_button()
 
@@ -229,6 +345,12 @@ function CampaignUI.update(map, config, mx, my, mouse_click)
 			last_click_state = mouse_click
 			return "back"
 		end
+	end
+
+	-- Check repair button
+	if campaign_state and CampaignUI.handle_repair_click(campaign_state, mouse_click) then
+		last_click_state = mouse_click
+		return "repair"
 	end
 
 	-- Check node clicks
@@ -375,6 +497,263 @@ function CampaignUI.draw_combat_victory(credits_earned, mx, my, mb)
 	last_click_state = click
 
 	return false
+end
+
+-- Draw campaign continue/new selection screen
+-- @param mx, my: Mouse position
+function CampaignUI.draw_campaign_select(mx, my)
+	cls(0)
+
+	local cx = 240
+	local cy = 100
+
+	-- Title
+	print("CAMPAIGN", cx - 32, cy - 60, 11)
+	print("A saved run was found", cx - 72, cy - 40, 7)
+
+	-- Button config
+	local btn_w = 120
+	local btn_h = 28
+	local btn_spacing = 15
+
+	-- Continue button
+	local btn1_x = cx - btn_w / 2
+	local btn1_y = cy - 10
+	select_continue_bounds = {x1 = btn1_x, y1 = btn1_y, x2 = btn1_x + btn_w, y2 = btn1_y + btn_h}
+
+	local hover1 = mx >= btn1_x and mx <= btn1_x + btn_w and my >= btn1_y and my <= btn1_y + btn_h
+	if hover1 then select_hovered = "continue" end
+
+	rectfill(btn1_x, btn1_y, btn1_x + btn_w, btn1_y + btn_h, hover1 and 5 or 1)
+	rect(btn1_x, btn1_y, btn1_x + btn_w, btn1_y + btn_h, hover1 and 11 or 6)
+	local text_w = print("Continue", 0, -1000)
+	print("Continue", btn1_x + (btn_w - text_w) / 2, btn1_y + 10, hover1 and 11 or 7)
+
+	-- New Run button
+	local btn2_y = btn1_y + btn_h + btn_spacing
+	select_new_bounds = {x1 = btn1_x, y1 = btn2_y, x2 = btn1_x + btn_w, y2 = btn2_y + btn_h}
+
+	local hover2 = mx >= btn1_x and mx <= btn1_x + btn_w and my >= btn2_y and my <= btn2_y + btn_h
+	if hover2 then select_hovered = "new" end
+
+	rectfill(btn1_x, btn2_y, btn1_x + btn_w, btn2_y + btn_h, hover2 and 5 or 1)
+	rect(btn1_x, btn2_y, btn1_x + btn_w, btn2_y + btn_h, hover2 and 11 or 6)
+	text_w = print("New Run", 0, -1000)
+	print("New Run", btn1_x + (btn_w - text_w) / 2, btn2_y + 10, hover2 and 11 or 7)
+
+	-- Back button
+	local back_text = "< Back"
+	local back_x = 30
+	local back_y = 240
+	select_back_bounds = {x1 = back_x - 5, y1 = back_y - 5, x2 = back_x + #back_text * 4 + 10, y2 = back_y + 12}
+
+	local hover_back = mx >= select_back_bounds.x1 and mx <= select_back_bounds.x2 and
+	                   my >= select_back_bounds.y1 and my <= select_back_bounds.y2
+	if hover_back then select_hovered = "back" end
+
+	print(back_text, back_x, back_y, hover_back and 11 or 6)
+
+	-- Reset hover if not over anything
+	if not hover1 and not hover2 and not hover_back then
+		select_hovered = nil
+	end
+end
+
+-- Update campaign select screen
+-- @param mx, my: Mouse position
+-- @param mouse_click: Whether mouse is clicked
+-- @return: "continue", "new", "back", or nil
+function CampaignUI.update_campaign_select(mx, my, mouse_click)
+	-- Update hover state from draw
+	CampaignUI.draw_campaign_select(mx, my)
+
+	if mouse_click and not last_click_state then
+		if select_hovered == "continue" then
+			last_click_state = mouse_click
+			return "continue"
+		elseif select_hovered == "new" then
+			last_click_state = mouse_click
+			return "new"
+		elseif select_hovered == "back" then
+			last_click_state = mouse_click
+			return "back"
+		end
+	end
+
+	last_click_state = mouse_click
+	return nil
+end
+
+-- Start ship movement animation to a target node
+-- @param from_node: Node the ship is moving from
+-- @param to_node: Node the ship is moving to
+-- @param config: Game config (for map dimensions)
+function CampaignUI.start_ship_animation(from_node, to_node, config)
+	local cfg = config.campaign
+	local map_x = cfg.map_x
+	local map_y = cfg.map_y
+	local map_width = cfg.map_width
+	local map_height = cfg.map_height
+
+	ship_anim.active = true
+	ship_anim.from_x = map_x + from_node.x * map_width
+	ship_anim.from_y = map_y + from_node.y * map_height
+	ship_anim.to_x = map_x + to_node.x * map_width
+	ship_anim.to_y = map_y + to_node.y * map_height
+	ship_anim.progress = 0
+	ship_anim.target_node = to_node
+
+	printh("CampaignUI: Starting ship animation to node " .. to_node.id)
+end
+
+-- Update ship animation (call each frame)
+-- @param dt: Delta time in seconds
+-- @return: target_node if animation just completed, nil otherwise
+function CampaignUI.update_ship_animation(dt)
+	if not ship_anim.active then return nil end
+
+	ship_anim.progress = ship_anim.progress + dt / ship_anim.duration
+
+	if ship_anim.progress >= 1 then
+		ship_anim.active = false
+		ship_anim.progress = 1
+		local target = ship_anim.target_node
+		ship_anim.target_node = nil
+		return target
+	end
+
+	return nil
+end
+
+-- Check if ship animation is active
+function CampaignUI.is_animating()
+	return ship_anim.active
+end
+
+-- Show encounter prompt for combat nodes
+function CampaignUI.show_encounter_prompt(node)
+	encounter_prompt.active = true
+	encounter_prompt.node = node
+end
+
+-- Hide encounter prompt
+function CampaignUI.hide_encounter_prompt()
+	encounter_prompt.active = false
+	encounter_prompt.node = nil
+end
+
+-- Check if encounter prompt is active
+function CampaignUI.is_encounter_prompt_active()
+	return encounter_prompt.active
+end
+
+-- Draw and update encounter prompt
+-- @param mx, my: Mouse position
+-- @param mouse_click: Whether mouse is clicked
+-- @return: "fight" if fight button clicked, "flee" if flee clicked, nil otherwise
+function CampaignUI.update_encounter_prompt(mx, my, mouse_click)
+	if not encounter_prompt.active or not encounter_prompt.node then
+		return nil
+	end
+
+	local cx = 240
+	local cy = 135
+
+	-- Draw dark overlay
+	rectfill(80, 70, 400, 200, 0)
+	rect(80, 70, 400, 200, 8)
+
+	-- Title
+	print("HOSTILE CONTACT", cx - 56, 85, 8)
+
+	-- Description
+	local desc = "Enemy vessel detected!"
+	print(desc, cx - #desc * 2, 110, 7)
+	print("Prepare for combat?", cx - 72, 125, 7)
+
+	-- Fight button
+	local btn_w = 80
+	local btn_h = 20
+	local fight_x = cx - 90
+	local fight_y = 155
+
+	local hover_fight = mx >= fight_x and mx <= fight_x + btn_w and my >= fight_y and my <= fight_y + btn_h
+	rectfill(fight_x, fight_y, fight_x + btn_w, fight_y + btn_h, hover_fight and 8 or 2)
+	rect(fight_x, fight_y, fight_x + btn_w, fight_y + btn_h, hover_fight and 10 or 8)
+	print("FIGHT", fight_x + 24, fight_y + 6, hover_fight and 10 or 7)
+
+	-- Flee button (disabled for now - could implement later)
+	local flee_x = cx + 10
+	local flee_y = 155
+
+	local hover_flee = mx >= flee_x and mx <= flee_x + btn_w and my >= flee_y and my <= flee_y + btn_h
+	rectfill(flee_x, flee_y, flee_x + btn_w, flee_y + btn_h, hover_flee and 5 or 1)
+	rect(flee_x, flee_y, flee_x + btn_w, flee_y + btn_h, hover_flee and 6 or 5)
+	print("FLEE", flee_x + 28, flee_y + 6, 5)  -- Grayed out
+
+	-- Handle clicks
+	if mouse_click and not last_click_state then
+		if hover_fight then
+			last_click_state = mouse_click
+			encounter_prompt.active = false
+			return "fight"
+		end
+		-- Flee is disabled for now
+	end
+
+	last_click_state = mouse_click
+	return nil
+end
+
+-- Set current location node (call when ship arrives at a node)
+function CampaignUI.set_current_location(node)
+	current_location.node = node
+end
+
+-- Clear current location
+function CampaignUI.clear_current_location()
+	current_location.node = nil
+end
+
+-- Check if at a shop/planet location
+function CampaignUI.is_at_shop()
+	return current_location.node and
+		(current_location.node.type == "shop" or current_location.node.type == "planet")
+end
+
+-- Draw and update shop button (only shows when at shop/planet)
+-- @param mx, my: Mouse position
+-- @param mouse_click: Whether mouse is clicked
+-- @return: "open_shop" if button clicked, nil otherwise
+function CampaignUI.update_shop_button(mx, my, mouse_click)
+	if not CampaignUI.is_at_shop() then
+		return nil
+	end
+
+	-- Draw shop button in bottom right area
+	local btn_x = 380
+	local btn_y = 250
+	local btn_w = 90
+	local btn_h = 18
+
+	local hover = mx >= btn_x and mx <= btn_x + btn_w and my >= btn_y and my <= btn_y + btn_h
+	current_location.shop_button_hover = hover
+
+	local btn_color = hover and 11 or 3
+	local border_color = hover and 7 or 11
+	rectfill(btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, btn_color)
+	rect(btn_x, btn_y, btn_x + btn_w, btn_y + btn_h, border_color)
+
+	local label = current_location.node.type == "shop" and "OPEN SHOP" or "EXPLORE"
+	print(label, btn_x + (btn_w - #label * 4) / 2, btn_y + 5, hover and 0 or 7)
+
+	-- Handle click
+	if hover and mouse_click and not last_click_state then
+		last_click_state = mouse_click
+		return "open_shop"
+	end
+
+	return nil
 end
 
 return CampaignUI

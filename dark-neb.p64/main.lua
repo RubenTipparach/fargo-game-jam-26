@@ -97,7 +97,7 @@ local current_health = Config.health.max_health
 local is_dead = false
 local destroyed_enemies = {}  -- Track which enemy ships have been destroyed (by ID)
 local death_time = 0
-local game_state = "main_menu"  -- "main_menu", "menu", "playing", "out_of_bounds", "game_over", "mission_success", "campaign_map", "campaign_shop", "campaign_victory", "campaign_death"
+local game_state = "main_menu"  -- "main_menu", "menu", "playing", "out_of_bounds", "game_over", "mission_success", "campaign_select", "campaign_map", "campaign_shop", "campaign_victory", "campaign_death"
 local game_mode = nil  -- "tutorial", "campaign", "instant_action"
 local out_of_bounds_time = 0  -- Time spent out of bounds
 local is_out_of_bounds = false
@@ -430,6 +430,8 @@ function _init()
 	Menu.init(Config)
 	MenuMain.init()
 	SaveData.init()
+	-- Link CampaignState to SaveData for persistence
+	CampaignState.set_save_data(SaveData)
 	-- Load tutorial progress from save data
 	Menu.set_tutorial_progress(SaveData.get_tutorial_progress())
 	build_energy_hitboxes()
@@ -519,6 +521,13 @@ end
 
 -- Check if sector is complete and advance or show completion
 function check_sector_complete()
+	-- Safety check: ensure sector map exists and has nodes
+	if not campaign_sector_map or not campaign_sector_map.nodes then
+		printh("ERROR: campaign_sector_map is invalid in check_sector_complete")
+		game_state = "campaign_map"
+		return
+	end
+
 	if SectorMap.is_sector_complete(campaign_sector_map) then
 		-- Advance to next sector
 		CampaignState.advance_sector()
@@ -532,6 +541,8 @@ function check_sector_complete()
 			-- Generate new sector map
 			campaign_sector_map = SectorMap.generate(Config, sector)
 			CampaignState.set_sector_map(campaign_sector_map)
+			-- First node is auto-visited in generate(), sync with campaign state
+			CampaignState.visit_node(1)
 			game_state = "campaign_map"
 		end
 	else
@@ -756,11 +767,19 @@ function _update()
 		if selected_mode then
 			game_mode = selected_mode
 			if selected_mode == "campaign" then
-				-- Start new campaign run
-				CampaignState.new_run(Config)
-				campaign_sector_map = SectorMap.generate(Config, 1)
-				CampaignState.set_sector_map(campaign_sector_map)
-				game_state = "campaign_map"
+				-- Check if there's a saved campaign
+				if CampaignState.has_saved_campaign() then
+					-- Show continue/new selection
+					game_state = "campaign_select"
+				else
+					-- Start new campaign run
+					CampaignState.new_run(Config)
+					campaign_sector_map = SectorMap.generate(Config, 1)
+					CampaignState.set_sector_map(campaign_sector_map)
+					-- First node is auto-visited in generate(), sync with campaign state
+					CampaignState.visit_node(1)
+					game_state = "campaign_map"
+				end
 			else
 				-- Tutorial or Instant Action - go to mission submenu
 				game_state = "menu"
@@ -770,31 +789,128 @@ function _update()
 		return  -- Skip all other updates while in main menu
 	end
 
-	-- Handle campaign sector map
-	if game_state == "campaign_map" then
+	-- Handle campaign continue/new selection
+	if game_state == "campaign_select" then
 		local mouse_click = (mb & 1) == 1
-		local result = CampaignUI.update(campaign_sector_map, Config, mx, my, mouse_click)
+		local result = CampaignUI.update_campaign_select(mx, my, mouse_click)
 
-		if result == "back" then
-			CampaignState.end_run()
+		if result == "continue" then
+			-- Load saved campaign
+			CampaignState.load_from_disk()
+			local state = CampaignState.get_state()
+			if state and state.sector_map then
+				campaign_sector_map = state.sector_map
+				-- Rebuild columns array to fix deserialization issues
+				SectorMap.rebuild_columns(campaign_sector_map)
+			else
+				-- Generate new map if save is corrupted
+				campaign_sector_map = SectorMap.generate(Config, state and state.current_sector or 1)
+				CampaignState.set_sector_map(campaign_sector_map)
+			end
+			game_state = "campaign_map"
+		elseif result == "new" then
+			-- Start fresh
+			CampaignState.clear_save()
+			CampaignState.new_run(Config)
+			campaign_sector_map = SectorMap.generate(Config, 1)
+			CampaignState.set_sector_map(campaign_sector_map)
+			-- First node is auto-visited in generate(), sync with campaign state
+			CampaignState.visit_node(1)
+			game_state = "campaign_map"
+		elseif result == "back" then
 			game_state = "main_menu"
 			game_mode = nil
 			MenuMain.init()
-		elseif result and type(result) == "table" then
-			-- Node selected
-			campaign_current_node = result
-			SectorMap.visit_node(campaign_sector_map, result.id)
-			CampaignState.visit_node(result.id)
+		end
+		return
+	end
 
-			if result.type == "combat" then
-				-- Start combat mission
+	-- Handle campaign sector map
+	if game_state == "campaign_map" then
+		local mouse_click = (mb & 1) == 1
+		local dt = 1/60  -- Frame delta time
+
+		-- Handle encounter prompt if active
+		if CampaignUI.is_encounter_prompt_active() then
+			local prompt_result = CampaignUI.update_encounter_prompt(mx, my, mouse_click)
+			if prompt_result == "fight" then
+				-- Start combat
+				CampaignUI.clear_current_location()
 				campaign_pre_combat_health = CampaignState.get_state().ship.current_health
 				start_campaign_combat()
-			elseif result.type == "shop" or result.type == "planet" then
-				game_state = "campaign_shop"
-			elseif result.type == "empty" then
-				-- Rest stop - just continue
-				check_sector_complete()
+			end
+			return
+		end
+
+		-- Update ship animation if active
+		if CampaignUI.is_animating() then
+			local arrived_node = CampaignUI.update_ship_animation(dt)
+			if arrived_node then
+				-- Animation complete - process arrival
+				campaign_current_node = arrived_node
+				SectorMap.visit_node(campaign_sector_map, arrived_node.id)
+				CampaignState.visit_node(arrived_node.id)
+
+				-- Set current location for shop button
+				CampaignUI.set_current_location(arrived_node)
+
+				-- Handle node type
+				if arrived_node.type == "combat" then
+					-- Show combat encounter prompt
+					CampaignUI.show_encounter_prompt(arrived_node)
+				elseif arrived_node.type == "shop" or arrived_node.type == "planet" then
+					-- Stay on map, player can click shop button to enter
+					-- (shop button will show automatically)
+				elseif arrived_node.type == "empty" then
+					-- Rest stop - safe passage, nothing happens
+				elseif arrived_node.type == "exit" then
+					-- Exit node - warp to next sector
+					CampaignUI.clear_current_location()
+					check_sector_complete()
+				end
+			end
+			return
+		end
+
+		-- Check shop button if at shop location
+		local shop_result = CampaignUI.update_shop_button(mx, my, mouse_click)
+		if shop_result == "open_shop" then
+			game_state = "campaign_shop"
+			return
+		end
+
+		-- Normal update - handle node selection
+		local result = CampaignUI.update(campaign_sector_map, Config, mx, my, mouse_click, CampaignState)
+
+		if result == "back" then
+			-- Don't end run, just go back (save persists)
+			game_state = "main_menu"
+			game_mode = nil
+			MenuMain.init()
+		elseif result == "repair" then
+			-- Repair was used, nothing else to do (state already saved)
+		elseif result and type(result) == "table" then
+			-- Node selected - find current position and start animation
+			local current_node = nil
+			for i = #campaign_sector_map.nodes, 1, -1 do
+				local node = campaign_sector_map.nodes[i]
+				if node.visited then
+					if not current_node or node.column > current_node.column then
+						current_node = node
+					end
+				end
+			end
+
+			if current_node then
+				-- Clear current location when starting to move
+				CampaignUI.clear_current_location()
+				-- Start movement animation
+				CampaignUI.start_ship_animation(current_node, result, Config)
+			else
+				-- No current node (shouldn't happen), process immediately
+				campaign_current_node = result
+				SectorMap.visit_node(campaign_sector_map, result.id)
+				CampaignState.visit_node(result.id)
 			end
 		end
 		return
@@ -1430,14 +1546,26 @@ function _draw()
 
 	if game_state == "menu" then UIRenderer.draw_menu() end
 
+	-- Campaign continue/new selection
+	if game_state == "campaign_select" then
+		CampaignUI.draw_campaign_select(mx, my)
+		return
+	end
+
 	-- Campaign sector map
 	if game_state == "campaign_map" then
 		cls(0)
 		CampaignUI.draw_sector_map(campaign_sector_map, Config, mx, my)
 		CampaignUI.draw_status_bar(CampaignState, Config)
-		CampaignUI.draw_ship_status(CampaignState)
+		CampaignUI.draw_ship_status(CampaignState, mx, my)
 		CampaignUI.draw_node_tooltip(Config, mx, my)
 		CampaignUI.draw_back_button()
+		-- Draw shop button if at shop/planet location
+		CampaignUI.update_shop_button(mx, my, false)  -- Draw only, no click handling
+		-- Draw encounter prompt on top if active
+		if CampaignUI.is_encounter_prompt_active() then
+			CampaignUI.update_encounter_prompt(mx, my, false)  -- Draw only, no click handling
+		end
 		return
 	end
 

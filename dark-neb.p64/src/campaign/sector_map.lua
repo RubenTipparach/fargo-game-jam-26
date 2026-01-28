@@ -10,6 +10,7 @@ SectorMap.NODE_TYPES = {
 	SHOP = "shop",
 	EMPTY = "empty",
 	PLANET = "planet",
+	EXIT = "exit",  -- Sector exit/warp gate
 }
 
 -- Generate a sector map
@@ -28,6 +29,7 @@ function SectorMap.generate(config, sector_number)
 	-- Generate nodes column by column
 	local columns = {}
 	local x_spacing = 1.0 / (#nodes_per_column + 1)
+	local shop_placed = false  -- Only allow one shop per sector
 
 	for col = 1, #nodes_per_column do
 		columns[col] = {}
@@ -37,13 +39,24 @@ function SectorMap.generate(config, sector_number)
 		for row = 1, node_count do
 			-- Determine node type
 			local node_type = SectorMap.NODE_TYPES.COMBAT  -- Default
+			local is_last_column = col == #nodes_per_column
 
 			-- First node of first column is always empty (safe start)
 			if col == 1 and row == 1 then
 				node_type = SectorMap.NODE_TYPES.EMPTY
+			-- Last column is always exit node (warp gate)
+			elseif is_last_column then
+				node_type = SectorMap.NODE_TYPES.EXIT
 			else
 				-- Weighted random selection
 				node_type = SectorMap.pick_node_type(weights)
+				-- Enforce max 1 shop per sector
+				if node_type == "shop" and shop_placed then
+					node_type = SectorMap.NODE_TYPES.COMBAT  -- Replace with combat
+				end
+				if node_type == "shop" then
+					shop_placed = true
+				end
 			end
 
 			-- Position (normalized 0-1)
@@ -162,6 +175,23 @@ function SectorMap.generate(config, sector_number)
 		sector_number = sector_number,
 	}
 
+	-- Auto-visit the first node (starting rest stop) and make its connections available
+	local first_node = columns[1][1]
+	if first_node then
+		first_node.visited = true
+		first_node.available = false  -- Already visited
+		-- Make connected nodes available
+		for i = 1, #first_node.connections do
+			local conn_id = first_node.connections[i]
+			for j = 1, #nodes do
+				if nodes[j].id == conn_id then
+					nodes[j].available = true
+					break
+				end
+			end
+		end
+	end
+
 	printh("SectorMap: Generated sector " .. sector_number .. " with " .. #nodes .. " nodes")
 	return map
 end
@@ -236,9 +266,18 @@ end
 
 -- Check if sector is complete (reached last column)
 function SectorMap.is_sector_complete(map)
-	local last_col = map.columns[#map.columns]
-	for i = 1, #last_col do
-		if last_col[i].visited then
+	-- Find the max column number
+	local max_col = 0
+	for i = 1, #map.nodes do
+		if map.nodes[i].column > max_col then
+			max_col = map.nodes[i].column
+		end
+	end
+
+	-- Check if any node in the last column is visited
+	for i = 1, #map.nodes do
+		local node = map.nodes[i]
+		if node.column == max_col and node.visited then
 			return true
 		end
 	end
@@ -273,6 +312,36 @@ function SectorMap.get_node_at_position(map, mx, my, config)
 	end
 
 	return nil
+end
+
+-- Rebuild columns array from nodes (needed after deserialization)
+-- This ensures columns contains references to the same node objects as the nodes array
+function SectorMap.rebuild_columns(map)
+	if not map or not map.nodes then return end
+
+	-- Find max column
+	local max_col = 0
+	for i = 1, #map.nodes do
+		if map.nodes[i].column > max_col then
+			max_col = map.nodes[i].column
+		end
+	end
+
+	-- Rebuild columns array
+	map.columns = {}
+	for col = 1, max_col do
+		map.columns[col] = {}
+	end
+
+	-- Add nodes to their columns
+	for i = 1, #map.nodes do
+		local node = map.nodes[i]
+		if node.column >= 1 and node.column <= max_col then
+			add(map.columns[node.column], node)
+		end
+	end
+
+	printh("SectorMap: Rebuilt columns array with " .. max_col .. " columns")
 end
 
 return SectorMap

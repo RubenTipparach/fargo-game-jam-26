@@ -787,12 +787,12 @@ Config.campaign = {
 
 	-- Sector map generation
 	sectors_per_run = 8,
-	nodes_per_column = {1, 3, 3, 2},  -- Fan out then converge
+	nodes_per_column = {1, 3, 3, 2, 1},  -- Fan out, converge, then exit node
 	node_type_weights = {
-		combat = 0.5,   -- 50% combat nodes
-		shop = 0.2,     -- 20% shop nodes
-		empty = 0.2,    -- 20% rest stops
-		planet = 0.1,   -- 10% planet encounters
+		combat = 0.55,  -- 55% combat nodes
+		shop = 0.25,    -- 25% shop nodes
+		empty = 0.05,   -- 5% rest stops (rare)
+		planet = 0.15,  -- 15% planet encounters
 	},
 
 	-- Map display
@@ -808,10 +808,12 @@ Config.campaign = {
 		shop = 11,     -- Green
 		empty = 6,     -- Gray
 		planet = 12,   -- Blue
+		exit = 9,      -- Orange - sector exit/warp gate
 		visited = 5,   -- Dark gray
 		current = 10,  -- Yellow
 		available = 7, -- White
 		connection = 1, -- Dark
+		ship = 10,     -- Yellow - player ship marker
 	},
 }
 

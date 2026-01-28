@@ -7,6 +7,49 @@ local CampaignState = {}
 -- Current run state
 local run_state = nil
 
+-- Reference to SaveData (set during init)
+local SaveData = nil
+
+-- Set SaveData reference for persistence
+function CampaignState.set_save_data(save_data_module)
+	SaveData = save_data_module
+end
+
+-- Save current run to persistent storage
+function CampaignState.save_to_disk()
+	if run_state and SaveData then
+		SaveData.save_campaign(run_state)
+	end
+end
+
+-- Load run from persistent storage
+function CampaignState.load_from_disk()
+	if SaveData then
+		local saved = SaveData.load_campaign()
+		if saved then
+			run_state = saved
+			printh("CampaignState: Loaded run from disk")
+			return true
+		end
+	end
+	return false
+end
+
+-- Check if there's a saved campaign
+function CampaignState.has_saved_campaign()
+	if SaveData then
+		return SaveData.has_campaign_save()
+	end
+	return false
+end
+
+-- Clear saved campaign from disk
+function CampaignState.clear_save()
+	if SaveData then
+		SaveData.clear_campaign()
+	end
+end
+
 -- Create default ship state
 local function create_default_ship(config)
 	return {
@@ -77,6 +120,7 @@ function CampaignState.visit_node(node_id)
 		run_state.visited_nodes[node_id] = true
 		run_state.current_node = node_id
 		run_state.stats.nodes_visited = run_state.stats.nodes_visited + 1
+		CampaignState.save_to_disk()  -- Persist after each node visit
 		printh("CampaignState: Visited node " .. tostring(node_id))
 	end
 end
@@ -105,6 +149,7 @@ function CampaignState.save_post_combat(player_health_obj, subsystem_states, dam
 	run_state.stats.damage_taken = run_state.stats.damage_taken + (damage_taken or 0)
 	run_state.stats.enemies_destroyed = run_state.stats.enemies_destroyed + 1
 
+	CampaignState.save_to_disk()  -- Persist after combat
 	printh("CampaignState: Saved post-combat state, hull=" .. run_state.ship.current_health)
 end
 
@@ -188,7 +233,24 @@ end
 function CampaignState.repair_hull(amount)
 	if run_state then
 		run_state.ship.current_health = min(run_state.ship.max_health, run_state.ship.current_health + amount)
+		CampaignState.save_to_disk()
 	end
+end
+
+-- Use repair kit to heal hull (for campaign map repair)
+-- @param heal_amount: How much to heal (default 25)
+function CampaignState.use_repair_kit_for_hull(heal_amount)
+	if not run_state then return false end
+	if run_state.repair_kits <= 0 then return false end
+	if run_state.ship.current_health >= run_state.ship.max_health then return false end
+
+	run_state.repair_kits = run_state.repair_kits - 1
+	local old_health = run_state.ship.current_health
+	run_state.ship.current_health = min(run_state.ship.max_health, run_state.ship.current_health + (heal_amount or 25))
+	CampaignState.save_to_disk()
+
+	printh("CampaignState: Used repair kit for hull, healed " .. (run_state.ship.current_health - old_health))
+	return true
 end
 
 -- Full repair (hull and all subsystems)
@@ -223,6 +285,7 @@ function CampaignState.advance_sector()
 		run_state.sector_map = nil
 		run_state.visited_nodes = {}
 		run_state.current_node = nil
+		CampaignState.save_to_disk()
 		printh("CampaignState: Advanced to sector " .. run_state.current_sector)
 	end
 end
@@ -248,6 +311,7 @@ end
 function CampaignState.end_run()
 	local stats = run_state and run_state.stats or nil
 	run_state = nil
+	CampaignState.clear_save()  -- Remove save file on run end
 	printh("CampaignState: Run ended")
 	return stats
 end
